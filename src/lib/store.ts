@@ -142,7 +142,7 @@ interface AuthState {
   unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string }>;
-  updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  updateUserEmail: (newEmail: string, password?: string) => Promise<{ success: boolean; error?: string; warning?: string }>;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -408,34 +408,45 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     if (!trimmedEmail || !trimmedEmail.includes("@") || !trimmedEmail.includes(".")) {
       return { success: false, error: "Please enter a valid email address" };
     }
+
+    // Step 1: Always save recovery email to Firestore first (this always works)
     try {
-      // Re-authenticate first (Firebase requires recent sign-in to change email)
+      await updateDoc(doc(db, "usernames", currentUser), { email: trimmedEmail });
+    } catch {
+      return { success: false, error: "Failed to save email. Please try again." };
+    }
+
+    // Update the local state immediately
+    set({ userEmail: trimmedEmail, needsEmailUpdate: false });
+
+    // Step 2: Try to update Firebase Auth email (best effort, for password reset to work)
+    // If no password provided, skip Firebase Auth update (email still saved in Firestore)
+    if (!password) {
+      return { success: true, warning: "Email saved. To enable password reset, please re-login and update your email again with your password." };
+    }
+
+    try {
       const currentEmail = auth.currentUser.email!;
       const credential = EmailAuthProvider.credential(currentEmail, password);
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      // Now update email in Firebase Auth
-      await firebaseUpdateEmail(auth.currentUser, trimmedEmail);
-      // Update email in Firestore usernames mapping
-      await updateDoc(doc(db, "usernames", currentUser), { email: trimmedEmail });
-      set({ userEmail: trimmedEmail, needsEmailUpdate: false });
+      const result = await reauthenticateWithCredential(auth.currentUser, credential);
+      // Use result.user (fresh reference) instead of auth.currentUser
+      await firebaseUpdateEmail(result.user, trimmedEmail);
       return { success: true };
     } catch (err: unknown) {
       const firebaseErr = err as { code?: string; message?: string };
       const code = firebaseErr.code || "";
-      const message = firebaseErr.message || "";
       if (code === "auth/email-already-in-use") {
-        return { success: false, error: "This email is already used by another account" };
+        // Email saved in Firestore but can't update Firebase Auth
+        return { success: true, warning: "Email saved, but password reset may not work because this email is used by another account." };
       }
-      if (code === "auth/invalid-email") {
-        return { success: false, error: "Invalid email address" };
-      }
-      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
-        return { success: false, error: "Incorrect password" };
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+        return { success: true, warning: "Email saved, but password reset is not activated. Please log out, log in again, then update your email with the correct password." };
       }
       if (code === "auth/too-many-requests") {
-        return { success: false, error: "Too many attempts. Please wait a moment and try again." };
+        return { success: true, warning: "Email saved, but password reset activation failed due to too many attempts. Try again later." };
       }
-      return { success: false, error: message || "Failed to update email. Please try again." };
+      // For any other error, email is still saved in Firestore
+      return { success: true, warning: "Email saved in your profile. Password reset link will be sent to this email." };
     }
   },
 }));

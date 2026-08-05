@@ -69,30 +69,33 @@ export function Dashboard() {
   const [migrationEmail, setMigrationEmail] = useState("");
   const [migrationPassword, setMigrationPassword] = useState("");
   const [migrationError, setMigrationError] = useState("");
+  const [migrationWarning, setMigrationWarning] = useState("");
   const [migrationLoading, setMigrationLoading] = useState(false);
 
   const openEmailDialog = () => {
-    setMigrationEmail("");
+    setMigrationEmail(userEmail || "");
     setMigrationPassword("");
     setMigrationError("");
+    setMigrationWarning("");
     setEmailDialogOpen(true);
   };
 
   const handleSaveEmail = async () => {
     setMigrationError("");
+    setMigrationWarning("");
     setMigrationLoading(true);
     try {
       if (!migrationEmail.trim().includes("@") || !migrationEmail.trim().includes(".")) {
         setMigrationError("Please enter a valid email address");
         return;
       }
-      if (!migrationPassword.trim()) {
-        setMigrationError("Please enter your password to confirm");
+      const result = await updateUserEmail(migrationEmail.trim(), migrationPassword.trim() || undefined);
+      if (!result.success) {
+        setMigrationError(result.error || "Failed to save email");
         return;
       }
-      const result = await updateUserEmail(migrationEmail.trim(), migrationPassword);
-      if (!result.success) {
-        setMigrationError(result.error || "Failed to update email");
+      if (result.warning) {
+        setMigrationWarning(result.warning);
         return;
       }
       setEmailDialogOpen(false);
@@ -190,12 +193,17 @@ export function Dashboard() {
                   <User className="w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuContent align="end" className="w-56">
                 <div className="px-2 py-1.5">
                   <p className="text-sm font-medium capitalize">{currentUser}</p>
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
                     <Cloud className="w-3 h-3" /> Cloud Synced
                   </p>
+                  {userEmail && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1 mt-1">
+                      <Mail className="w-3 h-3" /> {userEmail}
+                    </p>
+                  )}
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={lock} className="cursor-pointer">
@@ -204,11 +212,9 @@ export function Dashboard() {
                 <DropdownMenuItem onClick={exportCSV} className="cursor-pointer">
                   <Download className="w-4 h-4 mr-2" /> Export CSV
                 </DropdownMenuItem>
-                {!userEmail && (
-                  <DropdownMenuItem onClick={openEmailDialog} className="cursor-pointer">
-                    <Mail className="w-4 h-4 mr-2" /> Add Recovery Email
-                  </DropdownMenuItem>
-                )}
+                <DropdownMenuItem onClick={openEmailDialog} className="cursor-pointer">
+                  <Mail className="w-4 h-4 mr-2" /> {userEmail ? "Change Recovery Email" : "Add Recovery Email"}
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => setDeleteAccountOpen(true)}
@@ -327,6 +333,12 @@ export function Dashboard() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {userEmail && !needsEmailUpdate && (
+              <div className="bg-muted/50 border rounded-md px-3 py-2">
+                <p className="text-xs text-muted-foreground">Current recovery email</p>
+                <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{userEmail}</p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="migration-email">Email Address</Label>
               <Input
@@ -334,46 +346,60 @@ export function Dashboard() {
                 type="email"
                 placeholder="your@email.com"
                 value={migrationEmail}
-                onChange={(e) => setMigrationEmail(e.target.value)}
+                onChange={(e) => { setMigrationEmail(e.target.value); setMigrationError(""); setMigrationWarning(""); }}
                 className="h-11"
                 autoFocus
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="migration-password">Your Password</Label>
+              <Label htmlFor="migration-password">Your Password <span className="text-muted-foreground font-normal">(optional - for activating password reset)</span></Label>
               <Input
                 id="migration-password"
                 type="password"
-                placeholder="Enter your password to confirm"
+                placeholder="Enter your password"
                 value={migrationPassword}
-                onChange={(e) => setMigrationPassword(e.target.value)}
+                onChange={(e) => { setMigrationPassword(e.target.value); setMigrationError(""); setMigrationWarning(""); }}
                 className="h-11"
               />
+              <p className="text-xs text-muted-foreground">Leave blank to save email only. Enter password to also enable password reset.</p>
             </div>
             {migrationError && (
               <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{migrationError}</p>
             )}
+            {migrationWarning && (
+              <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
+                <p className="text-sm text-amber-700 dark:text-amber-400 font-medium">{migrationWarning}</p>
+              </div>
+            )}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setEmailDialogOpen(false)} className="cursor-pointer">
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSaveEmail}
-              disabled={migrationLoading}
-              className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
-            >
-              {migrationLoading ? (
-                <span className="flex items-center gap-2">
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Saving...
-                </span>
-              ) : (
-                <span className="flex items-center gap-2">
-                  <Mail className="w-4 h-4" /> Save Email
-                </span>
-              )}
-            </Button>
+            {(migrationWarning) ? (
+              <Button onClick={() => setEmailDialogOpen(false)} className="w-full bg-emerald-600 hover:bg-emerald-700 cursor-pointer">
+                Done
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setEmailDialogOpen(false)} className="cursor-pointer">
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSaveEmail}
+                  disabled={migrationLoading}
+                  className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
+                >
+                  {migrationLoading ? (
+                    <span className="flex items-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Saving...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <Mail className="w-4 h-4" /> Save Email
+                    </span>
+                  )}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
