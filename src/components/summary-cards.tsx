@@ -20,13 +20,15 @@ export function SummaryCards({ expenses, selectedMonth }: SummaryCardsProps) {
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const monthlyBudget = useSettingsStore((s) => s.monthlyBudget);
 
+  const isAllMonths = selectedMonth === "all";
+
   const stats = useMemo(() => {
     const monthTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
 
-    // Budget calculations
-    const budgetUsed = monthlyBudget > 0 ? (monthTotal / monthlyBudget) * 100 : 0;
-    const budgetRemaining = monthlyBudget > 0 ? monthlyBudget - monthTotal : 0;
-    const overBudget = monthlyBudget > 0 && monthTotal > monthlyBudget;
+    // Budget only applies when viewing a single month
+    const budgetUsed = (!isAllMonths && monthlyBudget > 0) ? (monthTotal / monthlyBudget) * 100 : 0;
+    const budgetRemaining = (!isAllMonths && monthlyBudget > 0) ? monthlyBudget - monthTotal : 0;
+    const overBudget = (!isAllMonths && monthlyBudget > 0) && monthTotal > monthlyBudget;
 
     return {
       monthTotal,
@@ -111,7 +113,9 @@ export function SummaryCards({ expenses, selectedMonth }: SummaryCardsProps) {
             </div>
             <p className="text-xl sm:text-2xl font-bold tabular-nums">{fmt(stats.monthTotal)}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              {stats.count} expense{stats.count !== 1 ? "s" : ""} this month
+              {isAllMonths
+                ? `${stats.count} expense${stats.count !== 1 ? "s" : ""} total`
+                : `${stats.count} expense${stats.count !== 1 ? "s" : ""} this month`}
             </p>
           </CardContent>
         </Card>

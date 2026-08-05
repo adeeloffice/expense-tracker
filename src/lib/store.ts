@@ -474,8 +474,21 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           }
         }
       }
-    } catch {
-      // If query fails (e.g., missing index), continue anyway
+    } catch (err) {
+      // If query fails, try fallback: fetch all docs and check manually
+      try {
+        const allDocs = await getDocs(collection(db, "usernames"));
+        for (const d of allDocs.docs) {
+          if (d.id === currentUser) continue;
+          const data = d.data();
+          const em = data.recoveryEmail || data.email;
+          if (em && em.toLowerCase() === trimmedEmail) {
+            return { success: false, error: "This email is already used by another account" };
+          }
+        }
+      } catch {
+        // If even the fallback fails, allow the save (security rules may block reads)
+      }
     }
 
     // Save recovery email to Firestore — ONLY update recoveryEmail field

@@ -54,11 +54,26 @@ function getMonthKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// Format month key to display label
+// Format month key to display label (safe - handles "all")
 function formatMonthLabel(key: string): string {
-  const [year, month] = key.split("-");
-  const d = new Date(parseInt(year), parseInt(month) - 1, 1);
+  if (key === "all") return "All Months";
+  const parts = key.split("-");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return key;
+  const year = parseInt(parts[0]);
+  const month = parseInt(parts[1]);
+  if (isNaN(year) || isNaN(month) || month < 1 || month > 12) return key;
+  const d = new Date(year, month - 1, 1);
   return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+// Check if a string is a valid month key
+function isValidMonthKey(key: string): boolean {
+  if (key === "all") return true;
+  const parts = key.split("-");
+  if (parts.length !== 2) return false;
+  const year = parseInt(parts[0]);
+  const month = parseInt(parts[1]);
+  return !isNaN(year) && !isNaN(month) && month >= 1 && month <= 12;
 }
 
 export function Dashboard() {
@@ -154,8 +169,9 @@ export function Dashboard() {
     return Array.from(monthSet).sort().reverse();
   }, [expenses]);
 
-  // Filter expenses for selected month
+  // Filter expenses for selected month ("all" shows everything)
   const monthExpenses = useMemo(() => {
+    if (selectedMonth === "all") return expenses;
     return expenses.filter((e) => {
       const d = new Date(e.date + "T00:00:00");
       return getMonthKey(d) === selectedMonth;
@@ -164,18 +180,27 @@ export function Dashboard() {
 
   // Month navigation
   const goToPrevMonth = () => {
+    if (selectedMonth === "all") {
+      // Jump to the most recent month with expenses
+      if (availableMonths.length > 0) {
+        setSelectedMonth(availableMonths[0]);
+      }
+      return;
+    }
     const [year, month] = selectedMonth.split("-").map(Number);
-    const d = new Date(year, month - 2, 1); // month-2 because JS months are 0-indexed and we want previous
+    const d = new Date(year, month - 2, 1);
     setSelectedMonth(getMonthKey(d));
   };
 
   const goToNextMonth = () => {
+    if (selectedMonth === "all") return;
     const [year, month] = selectedMonth.split("-").map(Number);
-    const d = new Date(year, month, 1); // month is 1-indexed here, JS will roll over
+    const d = new Date(year, month, 1);
     setSelectedMonth(getMonthKey(d));
   };
 
   const isCurrentMonth = selectedMonth === getMonthKey(new Date());
+  const isAllMonths = selectedMonth === "all";
 
   // Monthly bar chart data (all months)
   const monthlyData = useMemo(() => {
@@ -290,8 +315,8 @@ export function Dashboard() {
             </Button>
             <div className="flex items-center gap-2 bg-background border rounded-lg px-3 py-2 min-w-[180px] justify-center">
               <CalendarDays className="w-4 h-4 text-emerald-500" />
-              <span className="font-semibold text-sm sm:text-base">{formatMonthLabel(selectedMonth)}</span>
-              {isCurrentMonth && (
+              <span className="font-semibold text-sm sm:text-base">{isAllMonths ? "All Months" : formatMonthLabel(selectedMonth)}</span>
+              {!isAllMonths && isCurrentMonth && (
                 <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">
                   Current
                 </span>
@@ -302,7 +327,7 @@ export function Dashboard() {
               size="icon"
               className="h-9 w-9 cursor-pointer"
               onClick={goToNextMonth}
-              disabled={isCurrentMonth}
+              disabled={isAllMonths}
             >
               <ChevronRight className="w-4 h-4" />
             </Button>
@@ -349,7 +374,7 @@ export function Dashboard() {
                   <CardTitle className="text-base font-semibold">
                     Spending by Category
                   </CardTitle>
-                  <p className="text-xs text-muted-foreground">{formatMonthLabel(selectedMonth)}</p>
+                  <p className="text-xs text-muted-foreground">{isAllMonths ? "All time" : formatMonthLabel(selectedMonth)}</p>
                 </CardHeader>
                 <CardContent>
                   <ExpenseChart expenses={monthExpenses} />
