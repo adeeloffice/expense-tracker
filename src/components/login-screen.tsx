@@ -51,15 +51,15 @@ export function LoginScreen() {
     setError("");
     setIsLoading(true);
     try {
-      if (!username.trim() || !email.trim() || !password.trim()) {
-        setError("Please fill in all fields");
+      if (!username.trim() || !password.trim()) {
+        setError("Username and password are required");
         return;
       }
       if (username.trim().length < 2) {
         setError("Username must be at least 2 characters");
         return;
       }
-      if (!email.trim().includes("@") || !email.trim().includes(".")) {
+      if (email.trim() && (!email.trim().includes("@") || !email.trim().includes("."))) {
         setError("Please enter a valid email address");
         return;
       }
@@ -221,13 +221,13 @@ export function LoginScreen() {
                   placeholder="Choose a username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  autoComplete="username"
+                  autoComplete="off"
                   className="h-11"
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="signup-email">Email Address</Label>
+                <Label htmlFor="signup-email">Email Address <span className="text-muted-foreground font-normal">(optional)</span></Label>
                 <div className="relative">
                   <Input
                     id="signup-email"
@@ -235,12 +235,12 @@ export function LoginScreen() {
                     placeholder="your@email.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    autoComplete="email"
+                    autoComplete="off"
                     className="h-11"
                   />
                   <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 </div>
-                <p className="text-xs text-muted-foreground">Used for password recovery if you forget your password</p>
+                <p className="text-xs text-muted-foreground">Add email to enable password reset if you forget your password</p>
               </div>
 
               <div className="space-y-2">
@@ -321,7 +321,7 @@ export function LoginScreen() {
                   placeholder="Enter your username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  autoComplete="username"
+                  autoComplete="off"
                   className="h-11"
                 />
               </div>

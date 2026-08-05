@@ -198,21 +198,21 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     if (normalized.length < 2) {
       return { success: false, error: "Username must be at least 2 characters" };
     }
-    if (!trimmedEmail || !trimmedEmail.includes("@") || !trimmedEmail.includes(".")) {
+    // Email is optional — validate only if provided
+    if (trimmedEmail && (!trimmedEmail.includes("@") || !trimmedEmail.includes("."))) {
       return { success: false, error: "Please enter a valid email address" };
     }
     if (password.length < 6) {
       return { success: false, error: "Password must be at least 6 characters" };
     }
     try {
-      // Check if username is already taken
-      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
-      if (usernameDoc.exists()) {
-        return { success: false, error: "Username already exists" };
-      }
+      // Use real email if provided, otherwise fall back to @et.app
+      const authEmail = trimmedEmail || usernameToEmail(normalized);
 
-      // Create auth user with real email
-      const cred = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
+      // Try creating the Firebase Auth user FIRST
+      // This handles the case where a user was deleted from Firebase Console
+      // but the usernames doc still exists in Firestore
+      const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
       await updateProfile(cred.user, { displayName: normalized });
 
       // Create default settings in Firestore
@@ -221,25 +221,26 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         monthlyBudget: 0,
       });
 
-      // Create username → UID + email mapping
+      // Create/update username → UID + email mapping
+      // (setDoc overwrites any orphaned doc from a deleted user)
       await setDoc(doc(db, "usernames", normalized), {
         uid: cred.user.uid,
-        email: trimmedEmail,
+        email: trimmedEmail || null,
       });
 
       set({
         currentUser: normalized,
         uid: cred.user.uid,
-        userEmail: trimmedEmail,
+        userEmail: trimmedEmail || null,
         isAuthenticated: true,
         isLocked: false,
-        needsEmailUpdate: false,
+        needsEmailUpdate: !trimmedEmail,
       });
       return { success: true };
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || "";
       if (code === "auth/email-already-in-use") {
-        return { success: false, error: "This email is already registered" };
+        return { success: false, error: "This email or username is already registered" };
       }
       if (code === "auth/weak-password") {
         return { success: false, error: "Password is too weak (min 6 chars)" };
@@ -257,23 +258,27 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
     const normalized = username.trim().toLowerCase();
     try {
-      // Look up the user’s real email from Firestore
+      // Look up the user's email from Firestore
       let email: string | null = null;
       const usernameDoc = await getDoc(doc(db, "usernames", normalized));
       if (usernameDoc.exists()) {
         email = usernameDoc.data().email || null;
       }
-      // Fall back to fake email for old users who don’t have email stored
+      // Fall back to fake email for users without real email
       if (!email) {
         email = usernameToEmail(normalized);
       }
 
       await signInWithEmailAndPassword(auth, email, password);
-      // onAuthStateChanged will handle setting the state
       return { success: true };
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || "";
       if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
+        // Clean up orphaned Firestore doc if Firebase user was deleted externally
+        try {
+          const doc2 = await getDoc(doc(db!, "usernames", normalized));
+          if (doc2.exists()) await deleteDoc(doc(db!, "usernames", normalized));
+        } catch { /* ignore */ }
         return { success: false, error: "User not found. Please sign up first." };
       }
       if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
