@@ -142,7 +142,7 @@ interface AuthState {
   unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string }>;
-  updateUserEmail: (newEmail: string) => Promise<{ success: boolean; error?: string }>;
+  updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -396,7 +396,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
   },
 
-  updateUserEmail: async (newEmail) => {
+  updateUserEmail: async (newEmail, password) => {
     if (!auth?.currentUser) {
       return { success: false, error: "Not authenticated" };
     }
@@ -409,7 +409,11 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return { success: false, error: "Please enter a valid email address" };
     }
     try {
-      // Update email in Firebase Auth
+      // Re-authenticate first (Firebase requires recent sign-in to change email)
+      const currentEmail = auth.currentUser.email!;
+      const credential = EmailAuthProvider.credential(currentEmail, password);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      // Now update email in Firebase Auth
       await firebaseUpdateEmail(auth.currentUser, trimmedEmail);
       // Update email in Firestore usernames mapping
       await updateDoc(doc(db, "usernames", currentUser), { email: trimmedEmail });
@@ -423,7 +427,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       if (code === "auth/invalid-email") {
         return { success: false, error: "Invalid email address" };
       }
-      return { success: false, error: "Failed to update email. You may need to sign out and sign in again first." };
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+        return { success: false, error: "Incorrect password" };
+      }
+      return { success: false, error: "Failed to update email. Please try again." };
     }
   },
 }));

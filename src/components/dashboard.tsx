@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useAuthStore, useExpenseStore, useSettingsStore, formatCurrency, getCurrency, type Expense } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +37,6 @@ import {
   Trash2,
   Cloud,
   Mail,
-  AlertCircle,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { ExpenseForm } from "./expense-form";
@@ -62,21 +61,24 @@ export function Dashboard() {
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
-  // Email migration for existing @et.app users
+  // Add/Update recovery email
   const needsEmailUpdate = useAuthStore((s) => s.needsEmailUpdate);
+  const userEmail = useAuthStore((s) => s.userEmail);
   const updateUserEmail = useAuthStore((s) => s.updateUserEmail);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [migrationEmail, setMigrationEmail] = useState("");
+  const [migrationPassword, setMigrationPassword] = useState("");
   const [migrationError, setMigrationError] = useState("");
   const [migrationLoading, setMigrationLoading] = useState(false);
 
-  useEffect(() => {
-    if (needsEmailUpdate) {
-      setEmailDialogOpen(true);
-    }
-  }, [needsEmailUpdate]);
+  const openEmailDialog = () => {
+    setMigrationEmail("");
+    setMigrationPassword("");
+    setMigrationError("");
+    setEmailDialogOpen(true);
+  };
 
-  const handleMigrateEmail = async () => {
+  const handleSaveEmail = async () => {
     setMigrationError("");
     setMigrationLoading(true);
     try {
@@ -84,7 +86,11 @@ export function Dashboard() {
         setMigrationError("Please enter a valid email address");
         return;
       }
-      const result = await updateUserEmail(migrationEmail.trim());
+      if (!migrationPassword.trim()) {
+        setMigrationError("Please enter your password to confirm");
+        return;
+      }
+      const result = await updateUserEmail(migrationEmail.trim(), migrationPassword);
       if (!result.success) {
         setMigrationError(result.error || "Failed to update email");
         return;
@@ -198,6 +204,11 @@ export function Dashboard() {
                 <DropdownMenuItem onClick={exportCSV} className="cursor-pointer">
                   <Download className="w-4 h-4 mr-2" /> Export CSV
                 </DropdownMenuItem>
+                {!userEmail && (
+                  <DropdownMenuItem onClick={openEmailDialog} className="cursor-pointer">
+                    <Mail className="w-4 h-4 mr-2" /> Add Recovery Email
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => setDeleteAccountOpen(true)}
@@ -302,20 +313,22 @@ export function Dashboard() {
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <DeleteAccountDialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen} />
 
-      {/* Email Migration Dialog for old @et.app users */}
+      {/* Add/Update Recovery Email Dialog */}
       <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-amber-500" /> Add Recovery Email
+              <Mail className="w-5 h-5 text-emerald-500" /> {userEmail ? "Update Recovery Email" : "Add Recovery Email"}
             </DialogTitle>
             <DialogDescription>
-              Your account was created before password recovery was added. Please add your email to enable password reset in case you forget your password.
+              {userEmail
+                ? "Change the email used for password recovery."
+                : "Add your email to enable password reset if you forget your password."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="migration-email">Your Email Address</Label>
+              <Label htmlFor="migration-email">Email Address</Label>
               <Input
                 id="migration-email"
                 type="email"
@@ -326,16 +339,27 @@ export function Dashboard() {
                 autoFocus
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="migration-password">Your Password</Label>
+              <Input
+                id="migration-password"
+                type="password"
+                placeholder="Enter your password to confirm"
+                value={migrationPassword}
+                onChange={(e) => setMigrationPassword(e.target.value)}
+                className="h-11"
+              />
+            </div>
             {migrationError && (
               <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{migrationError}</p>
             )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setEmailDialogOpen(false)} className="cursor-pointer">
-              Skip for now
+              Cancel
             </Button>
             <Button
-              onClick={handleMigrateEmail}
+              onClick={handleSaveEmail}
               disabled={migrationLoading}
               className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
             >
