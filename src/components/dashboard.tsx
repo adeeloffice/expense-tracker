@@ -62,48 +62,30 @@ export function Dashboard() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   // Add/Update recovery email
-  const needsEmailUpdate = useAuthStore((s) => s.needsEmailUpdate);
   const userEmail = useAuthStore((s) => s.userEmail);
   const updateUserEmail = useAuthStore((s) => s.updateUserEmail);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [migrationEmail, setMigrationEmail] = useState("");
-  const [migrationPassword, setMigrationPassword] = useState("");
   const [migrationError, setMigrationError] = useState("");
-  const [migrationWarning, setMigrationWarning] = useState("");
-  const [migrationSuccess, setMigrationSuccess] = useState(false);
   const [migrationLoading, setMigrationLoading] = useState(false);
 
   const openEmailDialog = () => {
     setMigrationEmail(userEmail || "");
-    setMigrationPassword("");
     setMigrationError("");
-    setMigrationWarning("");
-    setMigrationSuccess(false);
     setEmailDialogOpen(true);
   };
 
   const handleSaveEmail = async () => {
     setMigrationError("");
-    setMigrationWarning("");
-    setMigrationSuccess(false);
     setMigrationLoading(true);
     try {
       if (!migrationEmail.trim().includes("@") || !migrationEmail.trim().includes(".")) {
         setMigrationError("Please enter a valid email address");
         return;
       }
-      const result = await updateUserEmail(migrationEmail.trim(), migrationPassword.trim() || undefined);
+      const result = await updateUserEmail(migrationEmail.trim());
       if (!result.success) {
         setMigrationError(result.error || "Failed to save email");
-        return;
-      }
-      if (result.warning && !result.verificationSent) {
-        setMigrationWarning(result.warning);
-        return;
-      }
-      if (result.verificationSent) {
-        setMigrationWarning("");
-        setMigrationSuccess(true);
         return;
       }
       setEmailDialogOpen(false);
@@ -330,107 +312,60 @@ export function Dashboard() {
       {/* Add/Update Recovery Email Dialog */}
       <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
         <DialogContent className="sm:max-w-md">
-          {migrationSuccess ? (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2 text-emerald-600">
-                  <Mail className="w-5 h-5" /> Verification Email Sent!
-                </DialogTitle>
-                <DialogDescription className="space-y-2">
-                  <p>A verification link has been sent to:</p>
-                  <p className="font-semibold text-foreground">{migrationEmail}</p>
-                  <p className="text-xs">Check your inbox and spam folder. Click the link to activate password reset for your account.</p>
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button onClick={() => setEmailDialogOpen(false)} className="w-full bg-emerald-600 hover:bg-emerald-700 cursor-pointer">
-                  Done
-                </Button>
-              </DialogFooter>
-            </>
-          ) : (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Mail className="w-5 h-5 text-emerald-500" /> {userEmail ? "Update Recovery Email" : "Add Recovery Email"}
-                </DialogTitle>
-                <DialogDescription>
-                  {userEmail
-                    ? "Change the email used for password recovery."
-                    : "Add your email to enable password reset if you forget your password."}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                {userEmail && !needsEmailUpdate && (
-                  <div className="bg-muted/50 border rounded-md px-3 py-2">
-                    <p className="text-xs text-muted-foreground">Current recovery email</p>
-                    <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{userEmail}</p>
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <Label htmlFor="migration-email">Email Address</Label>
-                  <Input
-                    id="migration-email"
-                    type="email"
-                    placeholder="your@email.com"
-                    value={migrationEmail}
-                    onChange={(e) => { setMigrationEmail(e.target.value); setMigrationError(""); setMigrationWarning(""); }}
-                    className="h-11"
-                    autoFocus
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="migration-password">Your Password <span className="text-muted-foreground font-normal">(optional - for activating password reset)</span></Label>
-                  <Input
-                    id="migration-password"
-                    type="password"
-                    placeholder="Enter your password"
-                    value={migrationPassword}
-                    onChange={(e) => { setMigrationPassword(e.target.value); setMigrationError(""); setMigrationWarning(""); }}
-                    className="h-11"
-                  />
-                  <p className="text-xs text-muted-foreground">Leave blank to save email only. Enter password to also activate password reset.</p>
-                </div>
-                {migrationError && (
-                  <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{migrationError}</p>
-                )}
-                {migrationWarning && (
-                  <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
-                    <p className="text-sm text-amber-700 dark:text-amber-400 font-medium">{migrationWarning}</p>
-                  </div>
-                )}
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="w-5 h-5 text-emerald-500" /> {userEmail ? "Change Recovery Email" : "Add Recovery Email"}
+            </DialogTitle>
+            <DialogDescription>
+              {userEmail
+                ? "Change the email used for password recovery."
+                : "Add your email to enable password reset if you forget your password."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {userEmail && (
+              <div className="bg-muted/50 border rounded-md px-3 py-2">
+                <p className="text-xs text-muted-foreground">Current recovery email</p>
+                <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{userEmail}</p>
               </div>
-              <DialogFooter className="gap-2">
-                {(migrationWarning) ? (
-                  <Button onClick={() => setEmailDialogOpen(false)} className="w-full bg-emerald-600 hover:bg-emerald-700 cursor-pointer">
-                    Done
-                  </Button>
-                ) : (
-                  <>
-                    <Button variant="outline" onClick={() => setEmailDialogOpen(false)} className="cursor-pointer">
-                      Cancel
-                    </Button>
-                    <Button
-                      onClick={handleSaveEmail}
-                      disabled={migrationLoading}
-                      className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
-                    >
-                      {migrationLoading ? (
-                        <span className="flex items-center gap-2">
-                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Saving...
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-2">
-                          <Mail className="w-4 h-4" /> Save Email
-                        </span>
-                      )}
-                    </Button>
-                  </>
-                )}
-              </DialogFooter>
-            </>
-          )}
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="migration-email">Email Address</Label>
+              <Input
+                id="migration-email"
+                type="email"
+                placeholder="your@email.com"
+                value={migrationEmail}
+                onChange={(e) => { setMigrationEmail(e.target.value); setMigrationError(""); }}
+                className="h-11"
+                autoFocus
+              />
+            </div>
+            {migrationError && (
+              <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{migrationError}</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setEmailDialogOpen(false)} className="cursor-pointer">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveEmail}
+              disabled={migrationLoading}
+              className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
+            >
+              {migrationLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Saving...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Mail className="w-4 h-4" /> Save Email
+                </span>
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

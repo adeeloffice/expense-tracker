@@ -11,7 +11,6 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
-  verifyBeforeUpdateEmail,
   sendPasswordResetEmail,
   firebaseDeleteUser,
   reauthenticateWithCredential,
@@ -142,7 +141,7 @@ interface AuthState {
   unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string }>;
-  updateUserEmail: (newEmail: string, password?: string) => Promise<{ success: boolean; error?: string; warning?: string; verificationSent?: boolean }>;
+  updateUserEmail: (newEmail: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -160,18 +159,36 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return () => {};
     }
 
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         const email = firebaseUser.email || "";
-        const needsEmail = email.endsWith("@et.app");
+        const username = firebaseUser.displayName || email.split("@")[0];
+        const isFakeEmail = email.endsWith("@et.app");
+
+        let recoveryEmail: string | null = null;
+        if (isFakeEmail && db) {
+          // User signed up without email — check Firestore for recovery email
+          try {
+            const usernameDoc = await getDoc(doc(db, "usernames", username));
+            if (usernameDoc.exists()) {
+              const stored = usernameDoc.data().email;
+              if (stored && !stored.endsWith("@et.app")) {
+                recoveryEmail = stored;
+              }
+            }
+          } catch { /* ignore */ }
+        } else if (!isFakeEmail) {
+          recoveryEmail = email;
+        }
+
         set({
-          currentUser: firebaseUser.displayName || email.split("@")[0],
+          currentUser: username,
           uid: firebaseUser.uid,
-          userEmail: needsEmail ? null : email,
+          userEmail: recoveryEmail,
           isAuthenticated: true,
           isInitializing: false,
           isLocked: false,
-          needsEmailUpdate: needsEmail,
+          needsEmailUpdate: !recoveryEmail,
         });
       } else {
         set({
@@ -258,10 +275,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
     const normalized = username.trim().toLowerCase();
     try {
-      // Look up the user's email from Firestore
+      // Look up the user's email from Firestore FIRST
       let email: string | null = null;
+      let userExists = false;
       const usernameDoc = await getDoc(doc(db, "usernames", normalized));
       if (usernameDoc.exists()) {
+        userExists = true;
         email = usernameDoc.data().email || null;
       }
       // Fall back to fake email for users without real email
@@ -273,16 +292,19 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return { success: true };
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || "";
-      if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
-        // Clean up orphaned Firestore doc if Firebase user was deleted externally
-        try {
-          const doc2 = await getDoc(doc(db!, "usernames", normalized));
-          if (doc2.exists()) await deleteDoc(doc(db!, "usernames", normalized));
-        } catch { /* ignore */ }
+      // Distinguish wrong password from user not found
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+        // Check if username exists in Firestore
+        const usernameDoc = await getDoc(doc(db!, "usernames", normalized));
+        if (usernameDoc.exists()) {
+          return { success: false, error: "Incorrect password" };
+        }
+        // Clean up orphaned doc if Firebase user was deleted
+        await deleteDoc(doc(db!, "usernames", normalized)).catch(() => {});
         return { success: false, error: "User not found. Please sign up first." };
       }
-      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
-        return { success: false, error: "Incorrect password" };
+      if (code === "auth/user-not-found") {
+        return { success: false, error: "User not found. Please sign up first." };
       }
       return { success: false, error: "Login failed. Please try again." };
     }
@@ -396,7 +418,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
   },
 
-  updateUserEmail: async (newEmail, password) => {
+  updateUserEmail: async (newEmail) => {
     if (!auth?.currentUser) {
       return { success: false, error: "Not authenticated" };
     }
@@ -409,47 +431,16 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return { success: false, error: "Please enter a valid email address" };
     }
 
-    // Step 1: Always save recovery email to Firestore first (this always works)
+    // Save recovery email to Firestore
     try {
       await updateDoc(doc(db, "usernames", currentUser), { email: trimmedEmail });
     } catch {
       return { success: false, error: "Failed to save email. Please try again." };
     }
 
-    // Update the local state immediately
+    // Update local state
     set({ userEmail: trimmedEmail, needsEmailUpdate: false });
-
-    // Step 2: Try to send verification email (best effort, for password reset to work)
-    // Uses verifyBeforeUpdateEmail which sends a confirmation link to the new email
-    if (!password) {
-      return { success: true, verificationSent: false, warning: "Email saved. To enable password reset, enter your password below and save again." };
-    }
-
-    try {
-      const currentEmail = auth.currentUser.email!;
-      const credential = EmailAuthProvider.credential(currentEmail, password);
-      const result = await reauthenticateWithCredential(auth.currentUser, credential);
-      // Send verification email instead of directly updating
-      const actionCodeSettings = {
-        url: "https://expense-tracker-five-alpha-69.vercel.app/",
-      };
-      await verifyBeforeUpdateEmail(result.user, trimmedEmail, actionCodeSettings);
-      return { success: true, verificationSent: true };
-    } catch (err: unknown) {
-      const firebaseErr = err as { code?: string; message?: string };
-      const code = firebaseErr.code || "";
-      if (code === "auth/email-already-in-use") {
-        return { success: true, verificationSent: false, warning: "Email saved, but password reset may not work because this email is already used by another account." };
-      }
-      if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
-        return { success: true, verificationSent: false, warning: "Email saved, but verification failed. Please check your password and try again." };
-      }
-      if (code === "auth/too-many-requests") {
-        return { success: true, verificationSent: false, warning: "Email saved. Too many attempts for verification. Please try again later." };
-      }
-      // Email is still saved in Firestore for any other error
-      return { success: true, verificationSent: false, warning: "Email saved in your profile." };
-    }
+    return { success: true };
   },
 }));
 

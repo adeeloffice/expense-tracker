@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useExpenseStore, useSettingsStore, formatCurrency, CATEGORIES, CATEGORY_COLORS, type Expense } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -51,11 +51,29 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [filterSort, setFilterSort] = useState<string>("date-desc");
+  const [filterMonth, setFilterMonth] = useState<string>("all");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [mobileDetail, setMobileDetail] = useState<Expense | null>(null);
 
   const fmt = (amount: number) => formatCurrency(amount, currencyCode);
+
+  // Build list of available months from expenses
+  const availableMonths = useMemo(() => {
+    const monthSet = new Set<string>();
+    expenses.forEach((e) => {
+      const d = new Date(e.date + "T00:00:00");
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      monthSet.add(key);
+    });
+    return Array.from(monthSet).sort().reverse();
+  }, [expenses]);
+
+  const formatMonthLabel = (key: string) => {
+    const [year, month] = key.split("-");
+    const d = new Date(parseInt(year), parseInt(month) - 1, 1);
+    return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  };
 
   // Filter and sort
   const filtered = expenses
@@ -67,7 +85,13 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
         e.category.toLowerCase().includes(search.toLowerCase());
       const matchCategory =
         filterCategory === "all" || e.category === filterCategory;
-      return matchSearch && matchCategory;
+      const matchMonth =
+        filterMonth === "all" || (() => {
+          const d = new Date(e.date + "T00:00:00");
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          return key === filterMonth;
+        })();
+      return matchSearch && matchCategory && matchMonth;
     })
     .sort((a, b) => {
       switch (filterSort) {
@@ -101,6 +125,10 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
     });
   };
 
+  // Reset page when filters change
+  const handleMonthChange = (v: string) => { setFilterMonth(v); setPage(1); };
+  const handleCategoryChange = (v: string) => { setFilterCategory(v); setPage(1); };
+
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -110,21 +138,25 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
           <Input
             placeholder="Search expenses..."
             value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="pl-9 h-10"
           />
         </div>
-        <div className="flex gap-2">
-          <Select
-            value={filterCategory}
-            onValueChange={(v) => {
-              setFilterCategory(v);
-              setPage(1);
-            }}
-          >
+        <div className="flex gap-2 flex-wrap">
+          {availableMonths.length > 0 && (
+            <Select value={filterMonth} onValueChange={handleMonthChange}>
+              <SelectTrigger className="w-[150px] h-10">
+                <SelectValue placeholder="All Months" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Months</SelectItem>
+                {availableMonths.map((m) => (
+                  <SelectItem key={m} value={m}>{formatMonthLabel(m)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Select value={filterCategory} onValueChange={handleCategoryChange}>
             <SelectTrigger className="w-[140px] h-10">
               <Filter className="w-4 h-4 mr-1" />
               <SelectValue />
@@ -132,9 +164,7 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
             <SelectContent>
               <SelectItem value="all">All Categories</SelectItem>
               {CATEGORIES.map((cat) => (
-                <SelectItem key={cat} value={cat}>
-                  {cat}
-                </SelectItem>
+                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -205,10 +235,7 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEdit(expense);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); onEdit(expense); }}
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </Button>
@@ -216,10 +243,7 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-destructive hover:text-destructive cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteId(expense.id);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); setDeleteId(expense.id); }}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
@@ -254,9 +278,7 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
                     {formatDate(expense.date)}
                   </p>
                 </div>
-                <p className="font-bold tabular-nums ml-3">
-                  {fmt(expense.amount)}
-                </p>
+                <p className="font-bold tabular-nums ml-3">{fmt(expense.amount)}</p>
               </div>
               <Badge
                 variant="secondary"
@@ -282,9 +304,7 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
           <div className="px-4 pb-6 space-y-4">
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Amount</span>
-              <span className="text-2xl font-bold">
-                {mobileDetail ? fmt(mobileDetail.amount) : ""}
-              </span>
+              <span className="text-2xl font-bold">{mobileDetail ? fmt(mobileDetail.amount) : ""}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Category</span>
@@ -311,22 +331,14 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
             <div className="flex gap-2 pt-2">
               <Button
                 className="flex-1 bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
-                onClick={() => {
-                  if (mobileDetail) onEdit(mobileDetail);
-                  setMobileDetail(null);
-                }}
+                onClick={() => { if (mobileDetail) onEdit(mobileDetail); setMobileDetail(null); }}
               >
                 <Pencil className="w-4 h-4 mr-2" /> Edit
               </Button>
               <Button
                 variant="destructive"
                 className="flex-1 cursor-pointer"
-                onClick={() => {
-                  if (mobileDetail) {
-                    setDeleteId(mobileDetail.id);
-                    setMobileDetail(null);
-                  }
-                }}
+                onClick={() => { if (mobileDetail) { setDeleteId(mobileDetail.id); setMobileDetail(null); } }}
               >
                 <Trash2 className="w-4 h-4 mr-2" /> Delete
               </Button>
@@ -339,21 +351,15 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
           <Button
-            variant="outline"
-            size="icon"
-            className="h-8 w-8 cursor-pointer"
+            variant="outline" size="icon" className="h-8 w-8 cursor-pointer"
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={safePage <= 1}
           >
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <span className="text-sm text-muted-foreground">
-            Page {safePage} of {totalPages}
-          </span>
+          <span className="text-sm text-muted-foreground">Page {safePage} of {totalPages}</span>
           <Button
-            variant="outline"
-            size="icon"
-            className="h-8 w-8 cursor-pointer"
+            variant="outline" size="icon" className="h-8 w-8 cursor-pointer"
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={safePage >= totalPages}
           >
@@ -374,10 +380,7 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
           <AlertDialogFooter>
             <AlertDialogCancel className="cursor-pointer">Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => {
-                if (deleteId) onDelete(deleteId);
-                setDeleteId(null);
-              }}
+              onClick={() => { if (deleteId) onDelete(deleteId); setDeleteId(null); }}
               className="bg-destructive hover:bg-destructive/90 cursor-pointer"
             >
               Delete
