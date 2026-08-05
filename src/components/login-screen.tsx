@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAuthStore, SECURITY_QUESTIONS } from "@/lib/store";
+import { useAuthStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,14 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Wallet, Eye, EyeOff, LogIn, UserPlus, KeyRound, ArrowLeft } from "lucide-react";
+import { Wallet, Eye, EyeOff, LogIn, UserPlus, KeyRound, Mail, ArrowLeft } from "lucide-react";
 
 type Screen = "login" | "forgot";
 
@@ -35,39 +28,39 @@ export function LoginScreen() {
   const [screen, setScreen] = useState<Screen>("login");
   const [isSignUp, setIsSignUp] = useState(false);
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // Security question fields (signup)
-  const [securityQ, setSecurityQ] = useState("");
-  const [securityA, setSecurityA] = useState("");
-
   // Forgot password fields
   const [forgotUsername, setForgotUsername] = useState("");
-  const [fetchedQuestion, setFetchedQuestion] = useState("");
-  const [securityAnswer, setSecurityAnswer] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmNewPassword, setConfirmNewPassword] = useState("");
-  const [forgotStep, setForgotStep] = useState<1 | 2 | 3>(1);
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotError, setForgotError] = useState("");
   const [forgotSuccess, setForgotSuccess] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
 
   const login = useAuthStore((s) => s.login);
   const signup = useAuthStore((s) => s.signup);
-  const getSecurityQuestion = useAuthStore((s) => s.getSecurityQuestion);
-  const resetPassword = useAuthStore((s) => s.resetPassword);
+  const forgotPassword = useAuthStore((s) => s.forgotPassword);
 
   const handleSignupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
     try {
-      if (!username.trim() || !password.trim()) {
+      if (!username.trim() || !email.trim() || !password.trim()) {
         setError("Please fill in all fields");
+        return;
+      }
+      if (username.trim().length < 2) {
+        setError("Username must be at least 2 characters");
+        return;
+      }
+      if (!email.trim().includes("@") || !email.trim().includes(".")) {
+        setError("Please enter a valid email address");
         return;
       }
       if (password.length < 6) {
@@ -78,15 +71,7 @@ export function LoginScreen() {
         setError("Passwords do not match");
         return;
       }
-      if (!securityQ) {
-        setError("Please select a security question");
-        return;
-      }
-      if (!securityA.trim()) {
-        setError("Please answer the security question");
-        return;
-      }
-      const result = await signup(username.trim(), password, securityQ, securityA);
+      const result = await signup(username.trim(), email.trim(), password);
       if (!result.success) {
         setError(result.error || "Signup failed");
       }
@@ -113,7 +98,7 @@ export function LoginScreen() {
     }
   };
 
-  const handleForgotStep1 = async (e: React.FormEvent) => {
+  const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError("");
     setForgotLoading(true);
@@ -122,46 +107,12 @@ export function LoginScreen() {
         setForgotError("Please enter your username");
         return;
       }
-      const result = await getSecurityQuestion(forgotUsername.trim());
+      const result = await forgotPassword(forgotUsername.trim());
       if (!result.success) {
-        setForgotError(result.error || "User not found");
+        setForgotError(result.error || "Failed to send reset email");
         return;
       }
-      setFetchedQuestion(result.question || "");
-      setForgotStep(2);
-    } finally {
-      setForgotLoading(false);
-    }
-  };
-
-  const handleForgotStep2 = (e: React.FormEvent) => {
-    e.preventDefault();
-    setForgotError("");
-    if (!securityAnswer.trim()) {
-      setForgotError("Please enter your answer");
-      return;
-    }
-    setForgotStep(3);
-  };
-
-  const handleForgotStep3 = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setForgotError("");
-    setForgotLoading(true);
-    try {
-      if (newPassword.length < 6) {
-        setForgotError("Password must be at least 6 characters");
-        return;
-      }
-      if (newPassword !== confirmNewPassword) {
-        setForgotError("Passwords do not match");
-        return;
-      }
-      const result = await resetPassword(forgotUsername.trim(), securityAnswer, newPassword);
-      if (!result.success) {
-        setForgotError(result.error || "Failed to reset password");
-        return;
-      }
+      setForgotEmail((result as { email: string }).email || "");
       setForgotSuccess(true);
     } finally {
       setForgotLoading(false);
@@ -171,13 +122,9 @@ export function LoginScreen() {
   const resetForgotFlow = () => {
     setScreen("login");
     setForgotUsername("");
-    setFetchedQuestion("");
-    setSecurityAnswer("");
-    setNewPassword("");
-    setConfirmNewPassword("");
-    setForgotStep(1);
     setForgotError("");
     setForgotSuccess(false);
+    setForgotEmail("");
   };
 
   // Forgot Password Dialog
@@ -188,10 +135,12 @@ export function LoginScreen() {
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-emerald-600">
-                <KeyRound className="w-5 h-5" /> Password Reset!
+                <Mail className="w-5 h-5" /> Check Your Email!
               </DialogTitle>
-              <DialogDescription>
-                Your password has been reset successfully. You can now sign in with your new password.
+              <DialogDescription className="space-y-2">
+                <p>A password reset link has been sent to:</p>
+                <p className="font-semibold text-foreground">{forgotEmail}</p>
+                <p className="text-xs">Check your inbox and spam/junk folder. Click the link in the email to set a new password.</p>
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -210,107 +159,36 @@ export function LoginScreen() {
                 <KeyRound className="w-5 h-5" /> Forgot Password
               </DialogTitle>
               <DialogDescription>
-                {forgotStep === 1 && "Enter your username to look up your security question"}
-                {forgotStep === 2 && `Answer your security question`}
-                {forgotStep === 3 && "Enter your new password"}
+                Enter your username and we will send a password reset link to your email.
               </DialogDescription>
             </DialogHeader>
 
-            {forgotStep === 1 && (
-              <form onSubmit={handleForgotStep1} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="forgot-username">Username</Label>
-                  <Input
-                    id="forgot-username"
-                    placeholder="Enter your username"
-                    value={forgotUsername}
-                    onChange={(e) => setForgotUsername(e.target.value)}
-                    className="h-11"
-                  />
-                </div>
-                {forgotError && (
-                  <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{forgotError}</p>
-                )}
-                <DialogFooter className="gap-2">
-                  <Button type="button" variant="outline" onClick={resetForgotFlow} className="cursor-pointer">
-                    <ArrowLeft className="w-4 h-4 mr-1" /> Back
-                  </Button>
-                  <Button type="submit" disabled={forgotLoading} className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer">
-                    {forgotLoading ? "Loading..." : "Continue"}
-                  </Button>
-                </DialogFooter>
-              </form>
-            )}
+            <form onSubmit={handleForgotSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="forgot-username">Username</Label>
+                <Input
+                  id="forgot-username"
+                  placeholder="Enter your username"
+                  value={forgotUsername}
+                  onChange={(e) => setForgotUsername(e.target.value)}
+                  className="h-11"
+                  autoFocus
+                />
+              </div>
 
-            {forgotStep === 2 && (
-              <form onSubmit={handleForgotStep2} className="space-y-4">
-                <div className="rounded-lg bg-muted p-4">
-                  <p className="text-sm font-medium">{fetchedQuestion}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="security-answer">Your Answer</Label>
-                  <Input
-                    id="security-answer"
-                    placeholder="Type your answer"
-                    value={securityAnswer}
-                    onChange={(e) => setSecurityAnswer(e.target.value)}
-                    className="h-11"
-                  />
-                </div>
-                {forgotError && (
-                  <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{forgotError}</p>
-                )}
-                <DialogFooter className="gap-2">
-                  <Button type="button" variant="outline" onClick={() => { setForgotStep(1); setForgotError(""); }} className="cursor-pointer">
-                    <ArrowLeft className="w-4 h-4 mr-1" /> Back
-                  </Button>
-                  <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer">
-                    Continue
-                  </Button>
-                </DialogFooter>
-              </form>
-            )}
+              {forgotError && (
+                <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{forgotError}</p>
+              )}
 
-            {forgotStep === 3 && (
-              <form onSubmit={handleForgotStep3} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="new-password">New Password</Label>
-                  <Input
-                    id="new-password"
-                    type="password"
-                    placeholder="Min 6 characters"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="h-11"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="confirm-new-password">Confirm New Password</Label>
-                  <Input
-                    id="confirm-new-password"
-                    type="password"
-                    placeholder="Confirm new password"
-                    value={confirmNewPassword}
-                    onChange={(e) => setConfirmNewPassword(e.target.value)}
-                    className="h-11"
-                  />
-                </div>
-                {forgotError && (
-                  <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{forgotError}</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Note: Password reset requires server configuration (Firebase Admin SDK). If it fails, you may need to create a new account.
-                </p>
-                <DialogFooter className="gap-2">
-                  <Button type="button" variant="outline" onClick={() => { setForgotStep(2); setForgotError(""); }} disabled={forgotLoading} className="cursor-pointer">
-                    <ArrowLeft className="w-4 h-4 mr-1" /> Back
-                  </Button>
-                  <Button type="submit" disabled={forgotLoading} className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer">
-                    {forgotLoading ? "Resetting..." : "Reset Password"}
-                  </Button>
-                </DialogFooter>
-              </form>
-            )}
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={resetForgotFlow} className="cursor-pointer">
+                  <ArrowLeft className="w-4 h-4 mr-1" /> Back
+                </Button>
+                <Button type="submit" disabled={forgotLoading} className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer">
+                  {forgotLoading ? "Sending..." : "Send Reset Link"}
+                </Button>
+              </DialogFooter>
+            </form>
           </>
         )}
       </DialogContent>
@@ -340,12 +218,29 @@ export function LoginScreen() {
                 <Label htmlFor="username">Username</Label>
                 <Input
                   id="username"
-                  placeholder="Enter your username"
+                  placeholder="Choose a username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   autoComplete="username"
                   className="h-11"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="signup-email">Email Address</Label>
+                <div className="relative">
+                  <Input
+                    id="signup-email"
+                    type="email"
+                    placeholder="your@email.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="email"
+                    className="h-11"
+                  />
+                  <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                </div>
+                <p className="text-xs text-muted-foreground">Used for password recovery if you forget your password</p>
               </div>
 
               <div className="space-y-2">
@@ -385,33 +280,6 @@ export function LoginScreen() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label>Security Question</Label>
-                <Select value={securityQ} onValueChange={setSecurityQ}>
-                  <SelectTrigger className="h-11">
-                    <SelectValue placeholder="Select a security question" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SECURITY_QUESTIONS.map((q) => (
-                      <SelectItem key={q} value={q}>
-                        {q}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="security-answer">Security Answer</Label>
-                <Input
-                  id="security-answer"
-                  placeholder="Your answer (used for password reset)"
-                  value={securityA}
-                  onChange={(e) => setSecurityA(e.target.value)}
-                  className="h-11"
-                />
-              </div>
-
               {error && (
                 <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{error}</p>
               )}
@@ -437,7 +305,7 @@ export function LoginScreen() {
                 Already have an account?{" "}
                 <button
                   type="button"
-                  onClick={() => { setIsSignUp(false); setError(""); setConfirmPassword(""); setSecurityQ(""); setSecurityA(""); }}
+                  onClick={() => { setIsSignUp(false); setError(""); setConfirmPassword(""); setEmail(""); }}
                   className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline cursor-pointer"
                 >
                   Sign In

@@ -1,10 +1,20 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useAuthStore, useExpenseStore, useSettingsStore, formatCurrency, getCurrency, type Expense } from "@/lib/store";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +36,8 @@ import {
   Settings,
   Trash2,
   Cloud,
+  Mail,
+  AlertCircle,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { ExpenseForm } from "./expense-form";
@@ -49,6 +61,39 @@ export function Dashboard() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+
+  // Email migration for existing @et.app users
+  const needsEmailUpdate = useAuthStore((s) => s.needsEmailUpdate);
+  const updateUserEmail = useAuthStore((s) => s.updateUserEmail);
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [migrationEmail, setMigrationEmail] = useState("");
+  const [migrationError, setMigrationError] = useState("");
+  const [migrationLoading, setMigrationLoading] = useState(false);
+
+  useEffect(() => {
+    if (needsEmailUpdate) {
+      setEmailDialogOpen(true);
+    }
+  }, [needsEmailUpdate]);
+
+  const handleMigrateEmail = async () => {
+    setMigrationError("");
+    setMigrationLoading(true);
+    try {
+      if (!migrationEmail.trim().includes("@") || !migrationEmail.trim().includes(".")) {
+        setMigrationError("Please enter a valid email address");
+        return;
+      }
+      const result = await updateUserEmail(migrationEmail.trim());
+      if (!result.success) {
+        setMigrationError(result.error || "Failed to update email");
+        return;
+      }
+      setEmailDialogOpen(false);
+    } finally {
+      setMigrationLoading(false);
+    }
+  };
 
   const handleEdit = useCallback((expense: Expense) => {
     setEditingExpense(expense);
@@ -256,6 +301,58 @@ export function Dashboard() {
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <DeleteAccountDialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen} />
+
+      {/* Email Migration Dialog for old @et.app users */}
+      <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-amber-500" /> Add Recovery Email
+            </DialogTitle>
+            <DialogDescription>
+              Your account was created before password recovery was added. Please add your email to enable password reset in case you forget your password.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="migration-email">Your Email Address</Label>
+              <Input
+                id="migration-email"
+                type="email"
+                placeholder="your@email.com"
+                value={migrationEmail}
+                onChange={(e) => setMigrationEmail(e.target.value)}
+                className="h-11"
+                autoFocus
+              />
+            </div>
+            {migrationError && (
+              <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{migrationError}</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setEmailDialogOpen(false)} className="cursor-pointer">
+              Skip for now
+            </Button>
+            <Button
+              onClick={handleMigrateEmail}
+              disabled={migrationLoading}
+              className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
+            >
+              {migrationLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Saving...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Mail className="w-4 h-4" /> Save Email
+                </span>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

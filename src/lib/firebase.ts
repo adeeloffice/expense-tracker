@@ -9,9 +9,11 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
+  updateEmail as firebaseUpdateEmail,
   deleteUser as firebaseDeleteUser,
   reauthenticateWithCredential,
   EmailAuthProvider,
+  sendPasswordResetEmail,
   type User,
 } from "firebase/auth";
 import {
@@ -67,6 +69,8 @@ export {
   signOut,
   onAuthStateChanged,
   updateProfile,
+  firebaseUpdateEmail,
+  sendPasswordResetEmail,
   firebaseDeleteUser,
   reauthenticateWithCredential,
   EmailAuthProvider,

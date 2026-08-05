@@ -11,6 +11,8 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
+  firebaseUpdateEmail,
+  sendPasswordResetEmail,
   firebaseDeleteUser,
   reauthenticateWithCredential,
   EmailAuthProvider,
@@ -41,7 +43,7 @@ export interface Expense {
   createdAt: string;
 }
 
-// --- Currency System (unchanged) ---
+// --- Currency System ---
 export interface Currency {
   code: string;
   symbol: string;
@@ -123,38 +125,34 @@ export const CATEGORY_COLORS: Record<string, string> = {
 // AUTH STORE — backed by Firebase Authentication
 // ============================================================
 
-export const SECURITY_QUESTIONS = [
-  "What is your pet's name?",
-  "What city were you born in?",
-  "What is your favorite food?",
-  "What school did you attend?",
-  "What is your mother's name?",
-] as const;
-
 interface AuthState {
-  currentUser: string | null; // username (displayName)
+  currentUser: string | null;
   uid: string | null;
+  userEmail: string | null;
   isLocked: boolean;
   isAuthenticated: boolean;
-  isInitializing: boolean; // true while Firebase checks auth state
+  isInitializing: boolean;
+  needsEmailUpdate: boolean;
 
-  initAuth: () => () => void; // returns cleanup function
-  signup: (username: string, password: string, securityQ: string, securityA: string) => Promise<{ success: boolean; error?: string }>;
+  initAuth: () => () => void;
+  signup: (username: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   lock: () => void;
   unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
-  getSecurityQuestion: (username: string) => Promise<{ success: boolean; question?: string; error?: string }>;
-  resetPassword: (username: string, securityAnswer: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  forgotPassword: (username: string) => Promise<{ success: boolean; error?: string }>;
+  updateUserEmail: (newEmail: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
   currentUser: null,
   uid: null,
+  userEmail: null,
   isLocked: false,
   isAuthenticated: false,
   isInitializing: true,
+  needsEmailUpdate: false,
 
   initAuth: () => {
     if (!auth) {
@@ -164,20 +162,26 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
+        const email = firebaseUser.email || "";
+        const needsEmail = email.endsWith("@et.app");
         set({
-          currentUser: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || null,
+          currentUser: firebaseUser.displayName || email.split("@")[0],
           uid: firebaseUser.uid,
+          userEmail: needsEmail ? null : email,
           isAuthenticated: true,
           isInitializing: false,
           isLocked: false,
+          needsEmailUpdate: needsEmail,
         });
       } else {
         set({
           currentUser: null,
           uid: null,
+          userEmail: null,
           isAuthenticated: false,
           isInitializing: false,
           isLocked: false,
+          needsEmailUpdate: false,
         });
       }
     });
@@ -185,64 +189,85 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     return () => unsubscribe();
   },
 
-  signup: async (username, password, securityQ, securityA) => {
+  signup: async (username, email, password) => {
     if (!auth || !db) {
       return { success: false, error: "Firebase is not configured. See .env.local" };
     }
     const normalized = username.trim().toLowerCase();
+    const trimmedEmail = email.trim().toLowerCase();
     if (normalized.length < 2) {
       return { success: false, error: "Username must be at least 2 characters" };
+    }
+    if (!trimmedEmail || !trimmedEmail.includes("@") || !trimmedEmail.includes(".")) {
+      return { success: false, error: "Please enter a valid email address" };
     }
     if (password.length < 6) {
       return { success: false, error: "Password must be at least 6 characters" };
     }
-    if (!securityQ || !securityA.trim()) {
-      return { success: false, error: "Please select a security question and answer" };
-    }
     try {
-      const email = usernameToEmail(normalized);
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      // Check if username is already taken
+      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
+      if (usernameDoc.exists()) {
+        return { success: false, error: "Username already exists" };
+      }
+
+      // Create auth user with real email
+      const cred = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
       await updateProfile(cred.user, { displayName: normalized });
-      // Create default settings document in Firestore (includes security data)
+
+      // Create default settings in Firestore
       await setDoc(doc(db, "users", cred.user.uid, "settings", "config"), {
         currencyCode: "BHD",
         monthlyBudget: 0,
-        securityQuestion: securityQ,
-        securityAnswer: securityA.trim().toLowerCase(),
       });
-      // Create username → UID mapping for password reset lookup
+
+      // Create username → UID + email mapping
       await setDoc(doc(db, "usernames", normalized), {
         uid: cred.user.uid,
+        email: trimmedEmail,
       });
+
       set({
         currentUser: normalized,
         uid: cred.user.uid,
+        userEmail: trimmedEmail,
         isAuthenticated: true,
         isLocked: false,
+        needsEmailUpdate: false,
       });
       return { success: true };
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || "";
       if (code === "auth/email-already-in-use") {
-        return { success: false, error: "Username already exists" };
+        return { success: false, error: "This email is already registered" };
       }
       if (code === "auth/weak-password") {
         return { success: false, error: "Password is too weak (min 6 chars)" };
       }
       if (code === "auth/invalid-email") {
-        return { success: false, error: "Invalid username" };
+        return { success: false, error: "Invalid email address" };
       }
       return { success: false, error: "Signup failed. Please try again." };
     }
   },
 
   login: async (username, password) => {
-    if (!auth) {
+    if (!auth || !db) {
       return { success: false, error: "Firebase is not configured. See .env.local" };
     }
     const normalized = username.trim().toLowerCase();
     try {
-      const email = usernameToEmail(normalized);
+      // Look up the user’s real email from Firestore
+      let email: string | null = null;
+      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
+      if (usernameDoc.exists()) {
+        email = usernameDoc.data().email || null;
+      }
+      // Fall back to fake email for old users who don’t have email stored
+      if (!email) {
+        email = usernameToEmail(normalized);
+      }
+
       await signInWithEmailAndPassword(auth, email, password);
       // onAuthStateChanged will handle setting the state
       return { success: true };
@@ -272,11 +297,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   unlock: async (password) => {
-    if (!auth || !db) return false;
-    const { currentUser, uid } = get();
-    if (!currentUser || !uid || !auth.currentUser) return false;
+    if (!auth || !auth.currentUser) return false;
     try {
-      const email = usernameToEmail(currentUser);
+      // Use the actual email from Firebase Auth (works for both old and new users)
+      const email = auth.currentUser.email!;
       const credential = EmailAuthProvider.credential(email, password);
       await reauthenticateWithCredential(auth.currentUser, credential);
       set({ isLocked: false });
@@ -293,8 +317,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const { uid, currentUser } = get();
     if (!uid) return { success: false, error: "Not authenticated" };
     try {
-      // Re-authenticate first (required before deleting account)
-      const email = usernameToEmail(auth.currentUser.email?.split("@")[0] || "");
+      // Re-authenticate (use actual email from Firebase Auth)
+      const email = auth.currentUser.email!;
       const credential = EmailAuthProvider.credential(email, password);
       await reauthenticateWithCredential(auth.currentUser, credential);
 
@@ -335,83 +359,66 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
   },
 
-  getSecurityQuestion: async (username) => {
-    if (!db) return { success: false, error: "Firebase not configured" };
-    const normalized = username.trim().toLowerCase();
-    try {
-      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
-      if (!usernameDoc.exists()) {
-        return { success: false, error: "User not found" };
-      }
-      const { uid } = usernameDoc.data();
-      const settingsDoc = await getDoc(doc(db, "users", uid, "settings", "config"));
-      if (!settingsDoc.exists()) {
-        return { success: false, error: "User data not found" };
-      }
-      const { securityQuestion } = settingsDoc.data();
-      return { success: true, question: securityQuestion };
-    } catch {
-      return { success: false, error: "Failed to look up user" };
-    }
-  },
-
-  resetPassword: async (username, securityAnswer, newPassword) => {
+  forgotPassword: async (username) => {
     if (!auth || !db) {
       return { success: false, error: "Firebase not configured" };
     }
     const normalized = username.trim().toLowerCase();
-    if (newPassword.length < 6) {
-      return { success: false, error: "Password must be at least 6 characters" };
-    }
     try {
-      // 1. Look up username → UID
+      // Look up the user’s email from Firestore
       const usernameDoc = await getDoc(doc(db, "usernames", normalized));
       if (!usernameDoc.exists()) {
-        return { success: false, error: "User not found" };
+        return { success: false, error: "Username not found" };
       }
-      const uid = usernameDoc.data().uid;
+      const data = usernameDoc.data();
+      const email = data.email;
 
-      // 2. Verify security answer
-      const settingsDoc = await getDoc(doc(db, "users", uid, "settings", "config"));
-      if (!settingsDoc.exists()) {
-        return { success: false, error: "User data not found" };
+      // Check if the user has a real recovery email
+      if (!email || email.endsWith("@et.app")) {
+        return {
+          success: false,
+          error: "This account was created without a recovery email. Please create a new account with your email to enable password reset.",
+        };
       }
-      const { securityAnswer: storedAnswer } = settingsDoc.data();
-      if (securityAnswer.trim().toLowerCase() !== storedAnswer) {
-        return { success: false, error: "Incorrect security answer" };
-      }
 
-      // 3. Delete old auth user and create new one with new password
-      // We need to delete the current user from Firebase Auth.
-      // Since we can't use Admin SDK, we'll sign in as the user first
-      // by temporarily signing in with a known mechanism, then updating.
-      // Actually, the cleanest client-side approach: re-authenticate and update.
-      // But the user forgot their password... so we use a workaround:
-      // Delete the old auth user (requires being signed in) and recreate.
-      // Since we can't sign them in, we'll use the API route approach.
-
-      // Client-side workaround: sign in with any password to trigger Firebase,
-      // then use the auth error to know the user exists.
-      // The actual reset: we'll delete old user & recreate.
-      // To delete without being signed in, we use a Next.js API route.
-
-      // Call our API route to handle the reset server-side
-      const res = await fetch("/api/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: usernameToEmail(normalized),
-          newPassword,
-        }),
+      // Send Firebase password reset email
+      await sendPasswordResetEmail(auth, email, {
+        url: "https://expense-tracker-five-alpha-69.vercel.app/",
       });
-      const data = await res.json();
-      if (!data.success) {
-        return { success: false, error: data.error || "Failed to reset password" };
-      }
-
-      return { success: true };
+      return { success: true, email };
     } catch {
-      return { success: false, error: "Failed to reset password. Please try again." };
+      return { success: false, error: "Failed to send reset email. Please try again." };
+    }
+  },
+
+  updateUserEmail: async (newEmail) => {
+    if (!auth?.currentUser) {
+      return { success: false, error: "Not authenticated" };
+    }
+    const { currentUser } = get();
+    if (!currentUser || !db) {
+      return { success: false, error: "Not authenticated" };
+    }
+    const trimmedEmail = newEmail.trim().toLowerCase();
+    if (!trimmedEmail || !trimmedEmail.includes("@") || !trimmedEmail.includes(".")) {
+      return { success: false, error: "Please enter a valid email address" };
+    }
+    try {
+      // Update email in Firebase Auth
+      await firebaseUpdateEmail(auth.currentUser, trimmedEmail);
+      // Update email in Firestore usernames mapping
+      await updateDoc(doc(db, "usernames", currentUser), { email: trimmedEmail });
+      set({ userEmail: trimmedEmail, needsEmailUpdate: false });
+      return { success: true };
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || "";
+      if (code === "auth/email-already-in-use") {
+        return { success: false, error: "This email is already used by another account" };
+      }
+      if (code === "auth/invalid-email") {
+        return { success: false, error: "Invalid email address" };
+      }
+      return { success: false, error: "Failed to update email. You may need to sign out and sign in again first." };
     }
   },
 }));
@@ -438,7 +445,6 @@ export const useExpenseStore = create<ExpenseState>()((set, get) => ({
   _unsubscribe: null,
 
   subscribeToExpenses: (uid: string) => {
-    // Unsubscribe from previous if any
     const prev = get()._unsubscribe;
     if (prev) prev();
 
@@ -487,7 +493,6 @@ export const useExpenseStore = create<ExpenseState>()((set, get) => ({
       ...expense,
       createdAt: new Date().toISOString(),
     });
-    // onSnapshot will automatically update the store
   },
 
   updateExpense: async (id, updates) => {
@@ -495,7 +500,6 @@ export const useExpenseStore = create<ExpenseState>()((set, get) => ({
     if (!db || !uid) return;
     const docRef = doc(db, "users", uid, "expenses", id);
     await updateDoc(docRef, updates);
-    // onSnapshot will automatically update the store
   },
 
   deleteExpense: async (id) => {
@@ -503,7 +507,6 @@ export const useExpenseStore = create<ExpenseState>()((set, get) => ({
     if (!db || !uid) return;
     const docRef = doc(db, "users", uid, "expenses", id);
     await deleteDoc(docRef);
-    // onSnapshot will automatically update the store
   },
 }));
 
@@ -571,6 +574,5 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     if (!db || !uid) return;
     const docRef = doc(db, "users", uid, "settings", "config");
     await setDoc(docRef, { currencyCode, monthlyBudget }, { merge: true });
-    // onSnapshot will automatically update the store
   },
 }));
