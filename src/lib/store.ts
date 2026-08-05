@@ -19,6 +19,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  getDoc,
   onSnapshot,
   setDoc,
   getDocs,
@@ -122,6 +123,14 @@ export const CATEGORY_COLORS: Record<string, string> = {
 // AUTH STORE — backed by Firebase Authentication
 // ============================================================
 
+export const SECURITY_QUESTIONS = [
+  "What is your pet's name?",
+  "What city were you born in?",
+  "What is your favorite food?",
+  "What school did you attend?",
+  "What is your mother's name?",
+] as const;
+
 interface AuthState {
   currentUser: string | null; // username (displayName)
   uid: string | null;
@@ -130,12 +139,14 @@ interface AuthState {
   isInitializing: boolean; // true while Firebase checks auth state
 
   initAuth: () => () => void; // returns cleanup function
-  signup: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  signup: (username: string, password: string, securityQ: string, securityA: string) => Promise<{ success: boolean; error?: string }>;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   lock: () => void;
   unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
+  getSecurityQuestion: (username: string) => Promise<{ success: boolean; question?: string; error?: string }>;
+  resetPassword: (username: string, securityAnswer: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -174,7 +185,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     return () => unsubscribe();
   },
 
-  signup: async (username, password) => {
+  signup: async (username, password, securityQ, securityA) => {
     if (!auth || !db) {
       return { success: false, error: "Firebase is not configured. See .env.local" };
     }
@@ -185,14 +196,23 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     if (password.length < 6) {
       return { success: false, error: "Password must be at least 6 characters" };
     }
+    if (!securityQ || !securityA.trim()) {
+      return { success: false, error: "Please select a security question and answer" };
+    }
     try {
       const email = usernameToEmail(normalized);
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       await updateProfile(cred.user, { displayName: normalized });
-      // Create default settings document in Firestore
+      // Create default settings document in Firestore (includes security data)
       await setDoc(doc(db, "users", cred.user.uid, "settings", "config"), {
         currencyCode: "BHD",
         monthlyBudget: 0,
+        securityQuestion: securityQ,
+        securityAnswer: securityA.trim().toLowerCase(),
+      });
+      // Create username → UID mapping for password reset lookup
+      await setDoc(doc(db, "usernames", normalized), {
+        uid: cred.user.uid,
       });
       set({
         currentUser: normalized,
@@ -270,7 +290,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     if (!auth || !db || !auth.currentUser) {
       return { success: false, error: "Not authenticated" };
     }
-    const { uid } = get();
+    const { uid, currentUser } = get();
     if (!uid) return { success: false, error: "Not authenticated" };
     try {
       // Re-authenticate first (required before deleting account)
@@ -294,6 +314,15 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         // settings doc might not exist
       }
 
+      // Delete username mapping
+      if (currentUser) {
+        try {
+          await deleteDoc(doc(db, "usernames", currentUser));
+        } catch {
+          // ignore
+        }
+      }
+
       // Delete the Firebase Auth user
       await firebaseDeleteUser(auth.currentUser);
       return { success: true };
@@ -303,6 +332,86 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         return { success: false, error: "Incorrect password" };
       }
       return { success: false, error: "Failed to delete account. Please try again." };
+    }
+  },
+
+  getSecurityQuestion: async (username) => {
+    if (!db) return { success: false, error: "Firebase not configured" };
+    const normalized = username.trim().toLowerCase();
+    try {
+      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
+      if (!usernameDoc.exists()) {
+        return { success: false, error: "User not found" };
+      }
+      const { uid } = usernameDoc.data();
+      const settingsDoc = await getDoc(doc(db, "users", uid, "settings", "config"));
+      if (!settingsDoc.exists()) {
+        return { success: false, error: "User data not found" };
+      }
+      const { securityQuestion } = settingsDoc.data();
+      return { success: true, question: securityQuestion };
+    } catch {
+      return { success: false, error: "Failed to look up user" };
+    }
+  },
+
+  resetPassword: async (username, securityAnswer, newPassword) => {
+    if (!auth || !db) {
+      return { success: false, error: "Firebase not configured" };
+    }
+    const normalized = username.trim().toLowerCase();
+    if (newPassword.length < 6) {
+      return { success: false, error: "Password must be at least 6 characters" };
+    }
+    try {
+      // 1. Look up username → UID
+      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
+      if (!usernameDoc.exists()) {
+        return { success: false, error: "User not found" };
+      }
+      const uid = usernameDoc.data().uid;
+
+      // 2. Verify security answer
+      const settingsDoc = await getDoc(doc(db, "users", uid, "settings", "config"));
+      if (!settingsDoc.exists()) {
+        return { success: false, error: "User data not found" };
+      }
+      const { securityAnswer: storedAnswer } = settingsDoc.data();
+      if (securityAnswer.trim().toLowerCase() !== storedAnswer) {
+        return { success: false, error: "Incorrect security answer" };
+      }
+
+      // 3. Delete old auth user and create new one with new password
+      // We need to delete the current user from Firebase Auth.
+      // Since we can't use Admin SDK, we'll sign in as the user first
+      // by temporarily signing in with a known mechanism, then updating.
+      // Actually, the cleanest client-side approach: re-authenticate and update.
+      // But the user forgot their password... so we use a workaround:
+      // Delete the old auth user (requires being signed in) and recreate.
+      // Since we can't sign them in, we'll use the API route approach.
+
+      // Client-side workaround: sign in with any password to trigger Firebase,
+      // then use the auth error to know the user exists.
+      // The actual reset: we'll delete old user & recreate.
+      // To delete without being signed in, we use a Next.js API route.
+
+      // Call our API route to handle the reset server-side
+      const res = await fetch("/api/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: usernameToEmail(normalized),
+          newPassword,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        return { success: false, error: data.error || "Failed to reset password" };
+      }
+
+      return { success: true };
+    } catch {
+      return { success: false, error: "Failed to reset password. Please try again." };
     }
   },
 }));
