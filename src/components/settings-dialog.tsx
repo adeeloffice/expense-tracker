@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useSettingsStore, CURRENCIES, getCurrency, formatCurrency } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +21,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Settings, Coins, Target } from "lucide-react";
-import { useState } from "react";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -30,14 +30,12 @@ interface SettingsDialogProps {
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const monthlyBudget = useSettingsStore((s) => s.monthlyBudget);
-  const setCurrency = useSettingsStore((s) => s.setCurrency);
-  const setMonthlyBudget = useSettingsStore((s) => s.setMonthlyBudget);
+  const saveSettings = useSettingsStore((s) => s.saveSettings);
 
-  // Use local state initialized from store values when dialog opens
-  // We use a key pattern: reset state when dialog opens via the key trick
   const [budgetInput, setBudgetInput] = useState("");
   const [selectedCurrency, setSelectedCurrency] = useState(currencyCode);
   const [initialized, setInitialized] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Initialize on first open
   if (open && !initialized) {
@@ -51,12 +49,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   const currency = getCurrency(selectedCurrency);
 
-  const handleSave = () => {
-    setCurrency(selectedCurrency);
-    const budget = parseFloat(budgetInput);
-    setMonthlyBudget(isNaN(budget) || budget <= 0 ? 0 : parseFloat(budget.toFixed(currency.decimals)));
-    setInitialized(false);
-    onOpenChange(false);
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const budget = parseFloat(budgetInput);
+      const finalBudget = isNaN(budget) || budget <= 0 ? 0 : parseFloat(budget.toFixed(currency.decimals));
+      await saveSettings(selectedCurrency, finalBudget);
+      setInitialized(false);
+      onOpenChange(false);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleClearBudget = () => {
@@ -152,6 +155,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               setInitialized(false);
               onOpenChange(false);
             }}
+            disabled={isSaving}
             className="cursor-pointer"
           >
             Cancel
@@ -159,9 +163,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <Button
             type="button"
             onClick={handleSave}
+            disabled={isSaving}
             className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
           >
-            Save Settings
+            {isSaving ? (
+              <span className="flex items-center gap-2">
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Saving...
+              </span>
+            ) : (
+              "Save Settings"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -25,6 +25,7 @@ import {
   User,
   Settings,
   Trash2,
+  Cloud,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { ExpenseForm } from "./expense-form";
@@ -39,14 +40,8 @@ export function Dashboard() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const lock = useAuthStore((s) => s.lock);
   const logout = useAuthStore((s) => s.logout);
-  const allExpenses = useExpenseStore((s) => s.expenses);
+  const expenses = useExpenseStore((s) => s.expenses);
   const deleteExpense = useExpenseStore((s) => s.deleteExpense);
-
-  // Only show current user's expenses
-  const expenses = useMemo(
-    () => allExpenses.filter((e) => e.username === currentUser),
-    [allExpenses, currentUser]
-  );
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const currency = getCurrency(currencyCode);
 
@@ -62,9 +57,9 @@ export function Dashboard() {
 
   const handleDelete = useCallback(
     (id: string) => {
-      if (currentUser) deleteExpense(id, currentUser);
+      deleteExpense(id);
     },
-    [deleteExpense, currentUser]
+    [deleteExpense]
   );
 
   const exportCSV = useCallback(() => {
@@ -147,7 +142,9 @@ export function Dashboard() {
               <DropdownMenuContent align="end" className="w-48">
                 <div className="px-2 py-1.5">
                   <p className="text-sm font-medium capitalize">{currentUser}</p>
-                  <p className="text-xs text-muted-foreground">Personal Account</p>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Cloud className="w-3 h-3" /> Cloud Synced
+                  </p>
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={lock} className="cursor-pointer">
@@ -164,7 +161,7 @@ export function Dashboard() {
                   <Trash2 className="w-4 h-4 mr-2" /> Delete Account
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={logout}
+                  onClick={() => logout()}
                   className="text-destructive focus:text-destructive cursor-pointer"
                 >
                   <LogOut className="w-4 h-4 mr-2" /> Sign Out
@@ -243,7 +240,9 @@ export function Dashboard() {
 
       {/* Footer */}
       <footer className="mt-auto border-t py-4 text-center text-xs text-muted-foreground">
-        <p>Expense Tracker &middot; Your data is stored locally on this device</p>
+        <p className="flex items-center justify-center gap-1">
+          <Cloud className="w-3 h-3" /> Expense Tracker &middot; Data synced to cloud &middot; Works on all devices
+        </p>
       </footer>
 
       {/* Dialogs */}

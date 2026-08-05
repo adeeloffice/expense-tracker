@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAuthStore, useAuthHydrated } from "@/lib/store";
+import { useAuthStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,7 +25,6 @@ export function LoginScreen() {
 
   const login = useAuthStore((s) => s.login);
   const signup = useAuthStore((s) => s.signup);
-  const hydrated = useAuthHydrated();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,6 +38,10 @@ export function LoginScreen() {
       }
 
       if (isSignUp) {
+        if (password.length < 6) {
+          setError("Password must be at least 6 characters");
+          return;
+        }
         if (password !== confirmPassword) {
           setError("Passwords do not match");
           return;
@@ -140,12 +143,12 @@ export function LoginScreen() {
             <Button
               type="submit"
               className="w-full h-11 text-base font-semibold bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
-              disabled={isLoading || !hydrated}
+              disabled={isLoading}
             >
-              {!hydrated || isLoading ? (
+              {isLoading ? (
                 <span className="flex items-center gap-2">
                   <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  {!hydrated ? "Loading..." : isSignUp ? "Creating..." : "Signing in..."}
+                  {isSignUp ? "Creating..." : "Signing in..."}
                 </span>
               ) : (
                 <span className="flex items-center gap-2">
@@ -176,6 +179,10 @@ export function LoginScreen() {
                 {isSignUp ? "Sign In" : "Sign Up"}
               </button>
             </div>
+
+            <p className="text-center text-xs text-muted-foreground">
+              Your data syncs across all devices via cloud storage
+            </p>
           </form>
         </CardContent>
       </Card>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAuthStore, useAuthHydrated } from "@/lib/store";
+import { useAuthStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,7 +23,6 @@ export function LockScreen() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const unlock = useAuthStore((s) => s.unlock);
   const logout = useAuthStore((s) => s.logout);
-  const hydrated = useAuthHydrated();
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,7 +95,7 @@ export function LockScreen() {
             <Button
               type="submit"
               className="w-full h-11 text-base font-semibold bg-amber-500 hover:bg-amber-600 cursor-pointer"
-              disabled={isLoading || !hydrated}
+              disabled={isLoading}
             >
               {isLoading ? (
                 <span className="flex items-center gap-2">
@@ -114,7 +113,7 @@ export function LockScreen() {
               type="button"
               variant="ghost"
               className="w-full h-10 text-muted-foreground hover:text-destructive cursor-pointer"
-              onClick={logout}
+              onClick={() => logout()}
             >
               <LogOut className="w-4 h-4 mr-2" /> Switch Account
             </Button>

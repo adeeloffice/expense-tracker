@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAuthStore, useExpenseStore } from "@/lib/store";
+import { useAuthStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,8 +22,7 @@ interface DeleteAccountDialogProps {
 
 export function DeleteAccountDialog({ open, onOpenChange }: DeleteAccountDialogProps) {
   const currentUser = useAuthStore((s) => s.currentUser);
-  const deleteUser = useAuthStore((s) => s.deleteUser);
-  const deleteExpensesForUser = useExpenseStore((s) => s.deleteExpensesForUser);
+  const deleteAccount = useAuthStore((s) => s.deleteAccount);
 
   const [password, setPassword] = useState("");
   const [confirmText, setConfirmText] = useState("");
@@ -31,17 +30,16 @@ export function DeleteAccountDialog({ open, onOpenChange }: DeleteAccountDialogP
   const [isLoading, setIsLoading] = useState(false);
 
   const handleDelete = async () => {
-    if (!currentUser) return;
+    if (!password.trim()) return;
     setError("");
     setIsLoading(true);
     try {
-      const result = await deleteUser(currentUser, password);
+      const result = await deleteAccount(password);
       if (!result.success) {
         setError(result.error || "Failed to delete account");
         return;
       }
-      // Also delete all expenses for this user
-      deleteExpensesForUser(currentUser);
+      // Account deleted, auth state change will redirect to login
       onOpenChange(false);
       setPassword("");
       setConfirmText("");
@@ -71,18 +69,18 @@ export function DeleteAccountDialog({ open, onOpenChange }: DeleteAccountDialogP
             <AlertTriangle className="w-5 h-5" /> Delete Account
           </DialogTitle>
           <DialogDescription>
-            This action is permanent and cannot be undone. All your expenses will be deleted.
+            This action is permanent and cannot be undone. All your expenses will be deleted from the cloud.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 space-y-2">
             <p className="text-sm font-medium text-destructive">
-              Warning: You are about to delete the account
+              Warning: You are about to permanently delete the account
             </p>
             <p className="text-sm font-semibold capitalize">&quot;{currentUser}&quot;</p>
             <p className="text-xs text-muted-foreground">
-              All expenses associated with this account will be permanently removed.
+              All expenses and settings will be permanently removed from the cloud.
             </p>
           </div>
 
@@ -124,6 +122,7 @@ export function DeleteAccountDialog({ open, onOpenChange }: DeleteAccountDialogP
             type="button"
             variant="outline"
             onClick={() => handleClose(false)}
+            disabled={isLoading}
             className="cursor-pointer"
           >
             Cancel

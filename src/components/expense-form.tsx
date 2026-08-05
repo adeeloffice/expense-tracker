@@ -32,7 +32,6 @@ interface ExpenseFormProps {
 export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormProps) {
   const addExpense = useExpenseStore((s) => s.addExpense);
   const updateExpense = useExpenseStore((s) => s.updateExpense);
-  const currentUser = useAuthStore((s) => s.currentUser);
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const currency = getCurrency(currencyCode);
 
@@ -42,9 +41,10 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
   const [date, setDate] = useState("");
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSaving, setIsSaving] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
-  // Sync from props when dialog opens (avoid useEffect pattern)
+  // Sync from props when dialog opens
   if (open && !initialized) {
     setInitialized(true);
     if (editingExpense) {
@@ -76,27 +76,31 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
+    if (!validate() || isSaving) return;
 
-    const expenseData = {
-      username: currentUser || "",
-      title: title.trim(),
-      amount: parseFloat(parseFloat(amount).toFixed(currency.decimals)),
-      category,
-      date,
-      note: note.trim(),
-    };
+    setIsSaving(true);
+    try {
+      const expenseData = {
+        title: title.trim(),
+        amount: parseFloat(parseFloat(amount).toFixed(currency.decimals)),
+        category,
+        date,
+        note: note.trim(),
+      };
 
-    if (editingExpense) {
-      updateExpense(editingExpense.id, currentUser || "", expenseData);
-    } else {
-      addExpense(expenseData);
+      if (editingExpense) {
+        await updateExpense(editingExpense.id, expenseData);
+      } else {
+        await addExpense(expenseData);
+      }
+
+      setInitialized(false);
+      onOpenChange(false);
+    } finally {
+      setIsSaving(false);
     }
-
-    setInitialized(false);
-    onOpenChange(false);
   };
 
   return (
@@ -196,6 +200,7 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
                 setInitialized(false);
                 onOpenChange(false);
               }}
+              disabled={isSaving}
               className="cursor-pointer"
             >
               Cancel
@@ -203,8 +208,14 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
             <Button
               type="submit"
               className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
+              disabled={isSaving}
             >
-              {editingExpense ? "Update" : "Add Expense"}
+              {isSaving ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Saving...
+                </span>
+              ) : editingExpense ? "Update" : "Add Expense"}
             </Button>
           </DialogFooter>
         </form>

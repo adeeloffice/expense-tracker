@@ -1,26 +1,46 @@
 "use client";
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import {
+  auth,
+  db,
+  isFirebaseConfigured,
+  usernameToEmail,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  updateProfile,
+  firebaseDeleteUser,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
+  collection,
+  doc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  setDoc,
+  getDocs,
+  writeBatch,
+} from "@/lib/firebase";
+import type { Unsubscribe } from "firebase/firestore";
+
+// Re-export Firebase config status for page.tsx
+export { isFirebaseConfigured };
 
 // --- Types ---
 export interface Expense {
   id: string;
-  username: string; // owner of this expense
   title: string;
   amount: number;
   category: string;
-  date: string; // ISO date string
+  date: string;
   note: string;
   createdAt: string;
 }
 
-export interface User {
-  username: string; // always stored lowercase
-  passwordHash: string;
-}
-
-// --- Currency System ---
+// --- Currency System (unchanged) ---
 export interface Currency {
   code: string;
   symbol: string;
@@ -98,208 +118,350 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Other: "hsl(215, 20%, 55%)",
 };
 
-// Simple hash function for password (NOT cryptographically secure - for demo only)
-async function simpleHash(str: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(str + "expense-tracker-salt");
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+// ============================================================
+// AUTH STORE — backed by Firebase Authentication
+// ============================================================
 
-// --- Auth Store ---
 interface AuthState {
-  users: User[];
-  currentUser: string | null;
+  currentUser: string | null; // username (displayName)
+  uid: string | null;
   isLocked: boolean;
   isAuthenticated: boolean;
-  _hasHydrated: boolean;
-  setHydrated: () => void;
+  isInitializing: boolean; // true while Firebase checks auth state
+
+  initAuth: () => () => void; // returns cleanup function
   signup: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  logout: () => void;
+  logout: () => Promise<void>;
   lock: () => void;
   unlock: (password: string) => Promise<boolean>;
-  deleteUser: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set, get) => ({
-      users: [],
-      currentUser: null,
-      isLocked: false,
-      isAuthenticated: false,
-      _hasHydrated: false,
+export const useAuthStore = create<AuthState>()((set, get) => ({
+  currentUser: null,
+  uid: null,
+  isLocked: false,
+  isAuthenticated: false,
+  isInitializing: true,
 
-      setHydrated: () => {
-        set({ _hasHydrated: true });
-      },
-
-      signup: async (username, password) => {
-        const { users } = get();
-        const normalized = username.trim().toLowerCase();
-        if (users.find((u) => u.username === normalized)) {
-          return { success: false, error: "Username already exists" };
-        }
-        if (normalized.length < 2) {
-          return { success: false, error: "Username must be at least 2 characters" };
-        }
-        if (password.length < 4) {
-          return { success: false, error: "Password must be at least 4 characters" };
-        }
-        const passwordHash = await simpleHash(password);
-        const newUser = { username: normalized, passwordHash };
-        set({
-          users: [...users, newUser],
-          currentUser: normalized,
-          isAuthenticated: true,
-          isLocked: false,
-        });
-        return { success: true };
-      },
-
-      login: async (username, password) => {
-        const { users } = get();
-        const normalized = username.trim().toLowerCase();
-        const user = users.find((u) => u.username === normalized);
-        if (!user) {
-          return { success: false, error: "User not found. Please sign up first." };
-        }
-        const passwordHash = await simpleHash(password);
-        if (user.passwordHash !== passwordHash) {
-          return { success: false, error: "Incorrect password" };
-        }
-        set({
-          currentUser: normalized,
-          isAuthenticated: true,
-          isLocked: false,
-        });
-        return { success: true };
-      },
-
-      logout: () => {
-        set({ currentUser: null, isAuthenticated: false, isLocked: false });
-      },
-
-      lock: () => {
-        set({ isLocked: true });
-      },
-
-      unlock: async (password) => {
-        const { users, currentUser } = get();
-        if (!currentUser) return false;
-        const user = users.find((u) => u.username === currentUser);
-        if (!user) return false;
-        const passwordHash = await simpleHash(password);
-        if (user.passwordHash !== passwordHash) return false;
-        set({ isLocked: false });
-        return true;
-      },
-
-      deleteUser: async (username, password) => {
-        const { users, currentUser } = get();
-        const normalized = username.trim().toLowerCase();
-        const user = users.find((u) => u.username === normalized);
-        if (!user) {
-          return { success: false, error: "User not found" };
-        }
-        const passwordHash = await simpleHash(password);
-        if (user.passwordHash !== passwordHash) {
-          return { success: false, error: "Incorrect password" };
-        }
-        const updatedUsers = users.filter((u) => u.username !== normalized);
-        const isDeletingSelf = currentUser === normalized;
-        set({
-          users: updatedUsers,
-          ...(isDeletingSelf ? { currentUser: null, isAuthenticated: false, isLocked: false } : {}),
-        });
-        return { success: true };
-      },
-    }),
-    {
-      name: "expense-auth",
-      onRehydrateStorage: () => (state) => {
-        if (state) state.setHydrated();
-      },
+  initAuth: () => {
+    if (!auth) {
+      set({ isInitializing: false });
+      return () => {};
     }
-  )
-);
 
-export const useAuthHydrated = () => useAuthStore((s) => s._hasHydrated);
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        set({
+          currentUser: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || null,
+          uid: firebaseUser.uid,
+          isAuthenticated: true,
+          isInitializing: false,
+          isLocked: false,
+        });
+      } else {
+        set({
+          currentUser: null,
+          uid: null,
+          isAuthenticated: false,
+          isInitializing: false,
+          isLocked: false,
+        });
+      }
+    });
 
-// --- Settings Store (currency + budget) ---
+    return () => unsubscribe();
+  },
+
+  signup: async (username, password) => {
+    if (!auth || !db) {
+      return { success: false, error: "Firebase is not configured. See .env.local" };
+    }
+    const normalized = username.trim().toLowerCase();
+    if (normalized.length < 2) {
+      return { success: false, error: "Username must be at least 2 characters" };
+    }
+    if (password.length < 6) {
+      return { success: false, error: "Password must be at least 6 characters" };
+    }
+    try {
+      const email = usernameToEmail(normalized);
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(cred.user, { displayName: normalized });
+      // Create default settings document in Firestore
+      await setDoc(doc(db, "users", cred.user.uid, "settings", "config"), {
+        currencyCode: "BHD",
+        monthlyBudget: 0,
+      });
+      set({
+        currentUser: normalized,
+        uid: cred.user.uid,
+        isAuthenticated: true,
+        isLocked: false,
+      });
+      return { success: true };
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || "";
+      if (code === "auth/email-already-in-use") {
+        return { success: false, error: "Username already exists" };
+      }
+      if (code === "auth/weak-password") {
+        return { success: false, error: "Password is too weak (min 6 chars)" };
+      }
+      if (code === "auth/invalid-email") {
+        return { success: false, error: "Invalid username" };
+      }
+      return { success: false, error: "Signup failed. Please try again." };
+    }
+  },
+
+  login: async (username, password) => {
+    if (!auth) {
+      return { success: false, error: "Firebase is not configured. See .env.local" };
+    }
+    const normalized = username.trim().toLowerCase();
+    try {
+      const email = usernameToEmail(normalized);
+      await signInWithEmailAndPassword(auth, email, password);
+      // onAuthStateChanged will handle setting the state
+      return { success: true };
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || "";
+      if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
+        return { success: false, error: "User not found. Please sign up first." };
+      }
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+        return { success: false, error: "Incorrect password" };
+      }
+      return { success: false, error: "Login failed. Please try again." };
+    }
+  },
+
+  logout: async () => {
+    if (!auth) return;
+    try {
+      await signOut(auth);
+    } catch {
+      // ignore sign out errors
+    }
+  },
+
+  lock: () => {
+    set({ isLocked: true });
+  },
+
+  unlock: async (password) => {
+    if (!auth || !db) return false;
+    const { currentUser, uid } = get();
+    if (!currentUser || !uid || !auth.currentUser) return false;
+    try {
+      const email = usernameToEmail(currentUser);
+      const credential = EmailAuthProvider.credential(email, password);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      set({ isLocked: false });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  deleteAccount: async (password) => {
+    if (!auth || !db || !auth.currentUser) {
+      return { success: false, error: "Not authenticated" };
+    }
+    const { uid } = get();
+    if (!uid) return { success: false, error: "Not authenticated" };
+    try {
+      // Re-authenticate first (required before deleting account)
+      const email = usernameToEmail(auth.currentUser.email?.split("@")[0] || "");
+      const credential = EmailAuthProvider.credential(email, password);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+
+      // Delete all expenses from Firestore
+      const expensesRef = collection(db, "users", uid, "expenses");
+      const snapshot = await getDocs(expensesRef);
+      if (!snapshot.empty) {
+        const batch = writeBatch(db);
+        snapshot.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+
+      // Delete settings document
+      try {
+        await deleteDoc(doc(db, "users", uid, "settings", "config"));
+      } catch {
+        // settings doc might not exist
+      }
+
+      // Delete the Firebase Auth user
+      await firebaseDeleteUser(auth.currentUser);
+      return { success: true };
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || "";
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+        return { success: false, error: "Incorrect password" };
+      }
+      return { success: false, error: "Failed to delete account. Please try again." };
+    }
+  },
+}));
+
+// ============================================================
+// EXPENSE STORE — backed by Cloud Firestore
+// ============================================================
+
+interface ExpenseState {
+  expenses: Expense[];
+  isLoading: boolean;
+  _unsubscribe: Unsubscribe | null;
+
+  subscribeToExpenses: (uid: string) => void;
+  unsubscribeFromExpenses: () => void;
+  addExpense: (expense: Omit<Expense, "id" | "createdAt">) => Promise<void>;
+  updateExpense: (id: string, updates: Partial<Expense>) => Promise<void>;
+  deleteExpense: (id: string) => Promise<void>;
+}
+
+export const useExpenseStore = create<ExpenseState>()((set, get) => ({
+  expenses: [],
+  isLoading: false,
+  _unsubscribe: null,
+
+  subscribeToExpenses: (uid: string) => {
+    // Unsubscribe from previous if any
+    const prev = get()._unsubscribe;
+    if (prev) prev();
+
+    if (!db) return;
+
+    set({ isLoading: true });
+    const expensesRef = collection(db, "users", uid, "expenses");
+    const unsub = onSnapshot(
+      expensesRef,
+      (snapshot) => {
+        const expenses: Expense[] = snapshot.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            title: data.title || "",
+            amount: data.amount || 0,
+            category: data.category || "",
+            date: data.date || "",
+            note: data.note || "",
+            createdAt: data.createdAt || "",
+          };
+        });
+        set({ expenses, isLoading: false });
+      },
+      () => {
+        set({ isLoading: false });
+      }
+    );
+
+    set({ _unsubscribe: unsub });
+  },
+
+  unsubscribeFromExpenses: () => {
+    const prev = get()._unsubscribe;
+    if (prev) {
+      prev();
+      set({ _unsubscribe: null, expenses: [] });
+    }
+  },
+
+  addExpense: async (expense) => {
+    const { uid } = useAuthStore.getState();
+    if (!db || !uid) return;
+    const expensesRef = collection(db, "users", uid, "expenses");
+    await addDoc(expensesRef, {
+      ...expense,
+      createdAt: new Date().toISOString(),
+    });
+    // onSnapshot will automatically update the store
+  },
+
+  updateExpense: async (id, updates) => {
+    const { uid } = useAuthStore.getState();
+    if (!db || !uid) return;
+    const docRef = doc(db, "users", uid, "expenses", id);
+    await updateDoc(docRef, updates);
+    // onSnapshot will automatically update the store
+  },
+
+  deleteExpense: async (id) => {
+    const { uid } = useAuthStore.getState();
+    if (!db || !uid) return;
+    const docRef = doc(db, "users", uid, "expenses", id);
+    await deleteDoc(docRef);
+    // onSnapshot will automatically update the store
+  },
+}));
+
+// ============================================================
+// SETTINGS STORE — backed by Cloud Firestore
+// ============================================================
+
 interface SettingsState {
   currencyCode: string;
   monthlyBudget: number;
-  setCurrency: (code: string) => void;
-  setMonthlyBudget: (amount: number) => void;
+  isLoading: boolean;
+  _unsubscribe: Unsubscribe | null;
+
+  subscribeToSettings: (uid: string) => void;
+  unsubscribeFromSettings: () => void;
+  saveSettings: (currencyCode: string, monthlyBudget: number) => Promise<void>;
 }
 
-export const useSettingsStore = create<SettingsState>()(
-  persist(
-    (set) => ({
-      currencyCode: "BHD", // Default BHD
-      monthlyBudget: 0, // 0 means no budget set
-      setCurrency: (code) => set({ currencyCode: code }),
-      setMonthlyBudget: (amount) => set({ monthlyBudget: amount }),
-    }),
-    {
-      name: "expense-settings",
+export const useSettingsStore = create<SettingsState>()((set, get) => ({
+  currencyCode: "BHD",
+  monthlyBudget: 0,
+  isLoading: false,
+  _unsubscribe: null,
+
+  subscribeToSettings: (uid: string) => {
+    const prev = get()._unsubscribe;
+    if (prev) prev();
+
+    if (!db) return;
+
+    set({ isLoading: true });
+    const docRef = doc(db, "users", uid, "settings", "config");
+    const unsub = onSnapshot(
+      docRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          set({
+            currencyCode: data.currencyCode || "BHD",
+            monthlyBudget: data.monthlyBudget || 0,
+            isLoading: false,
+          });
+        } else {
+          set({ isLoading: false });
+        }
+      },
+      () => {
+        set({ isLoading: false });
+      }
+    );
+
+    set({ _unsubscribe: unsub });
+  },
+
+  unsubscribeFromSettings: () => {
+    const prev = get()._unsubscribe;
+    if (prev) {
+      prev();
+      set({ _unsubscribe: null });
     }
-  )
-);
+  },
 
-// --- Expense Store ---
-interface ExpenseState {
-  expenses: Expense[];
-  addExpense: (expense: Omit<Expense, "id" | "createdAt">) => void;
-  updateExpense: (id: string, username: string, expense: Partial<Expense>) => void;
-  deleteExpense: (id: string, username: string) => void;
-  deleteExpensesForUser: (username: string) => void;
-  getExpensesForUser: (username: string) => Expense[];
-}
-
-export const useExpenseStore = create<ExpenseState>()(
-  persist(
-    (set, get) => ({
-      expenses: [],
-
-      addExpense: (expense) => {
-        const newExpense: Expense = {
-          ...expense,
-          id: crypto.randomUUID(),
-          createdAt: new Date().toISOString(),
-        };
-        set((state) => ({ expenses: [...state.expenses, newExpense] }));
-      },
-
-      updateExpense: (id, username, updates) => {
-        set((state) => ({
-          expenses: state.expenses.map((e) =>
-            e.id === id && e.username === username ? { ...e, ...updates } : e
-          ),
-        }));
-      },
-
-      deleteExpense: (id, username) => {
-        set((state) => ({
-          expenses: state.expenses.filter((e) => !(e.id === id && e.username === username)),
-        }));
-      },
-
-      deleteExpensesForUser: (username) => {
-        set((state) => ({
-          expenses: state.expenses.filter((e) => e.username !== username),
-        }));
-      },
-
-      getExpensesForUser: (username) => {
-        return get().expenses.filter((e) => e.username === username);
-      },
-    }),
-    {
-      name: "expense-data",
-    }
-  )
-);
+  saveSettings: async (currencyCode, monthlyBudget) => {
+    const { uid } = useAuthStore.getState();
+    if (!db || !uid) return;
+    const docRef = doc(db, "users", uid, "settings", "config");
+    await setDoc(docRef, { currencyCode, monthlyBudget }, { merge: true });
+    // onSnapshot will automatically update the store
+  },
+}));
