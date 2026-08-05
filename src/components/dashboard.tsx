@@ -412,7 +412,7 @@ export function Dashboard() {
         }}
         editingExpense={editingExpense}
       />
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} selectedMonth={selectedMonth} />
       <DeleteAccountDialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen} />
 
       {/* Add/Update Recovery Email Dialog */}

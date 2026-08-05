@@ -602,18 +602,22 @@ export const useExpenseStore = create<ExpenseState>()((set, get) => ({
 
 interface SettingsState {
   currencyCode: string;
-  monthlyBudget: number;
+  monthlyBudget: number; // legacy single budget (kept for migration)
+  monthlyBudgets: Record<string, number>; // per-month budgets: "YYYY-MM" -> amount
   isLoading: boolean;
   _unsubscribe: Unsubscribe | null;
 
   subscribeToSettings: (uid: string) => void;
   unsubscribeFromSettings: () => void;
-  saveSettings: (currencyCode: string, monthlyBudget: number) => Promise<void>;
+  saveSettings: (currencyCode: string) => Promise<void>;
+  saveBudgetForMonth: (monthKey: string, amount: number) => Promise<void>;
+  getBudgetForMonth: (monthKey: string) => number;
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   currencyCode: "BHD",
   monthlyBudget: 0,
+  monthlyBudgets: {},
   isLoading: false,
   _unsubscribe: null,
 
@@ -630,9 +634,21 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data();
+          const budgets = data.monthlyBudgets || {};
+          const legacyBudget = data.monthlyBudget || 0;
+
+          // Migrate old single monthlyBudget to current month if no per-month budgets exist
+          if (legacyBudget > 0 && Object.keys(budgets).length === 0) {
+            const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+            budgets[currentMonth] = legacyBudget;
+            // Write migrated data back to Firestore
+            setDoc(docRef, { monthlyBudgets: budgets, monthlyBudget: 0 }, { merge: true }).catch(() => {});
+          }
+
           set({
             currencyCode: data.currencyCode || "BHD",
-            monthlyBudget: data.monthlyBudget || 0,
+            monthlyBudget: legacyBudget,
+            monthlyBudgets: budgets,
             isLoading: false,
           });
         } else {
@@ -655,10 +671,28 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     }
   },
 
-  saveSettings: async (currencyCode, monthlyBudget) => {
+  saveSettings: async (currencyCode) => {
     const { uid } = useAuthStore.getState();
     if (!db || !uid) return;
     const docRef = doc(db, "users", uid, "settings", "config");
-    await setDoc(docRef, { currencyCode, monthlyBudget }, { merge: true });
+    await setDoc(docRef, { currencyCode }, { merge: true });
+  },
+
+  saveBudgetForMonth: async (monthKey, amount) => {
+    const { uid, monthlyBudgets } = get();
+    if (!db || !uid) return;
+    const docRef = doc(db, "users", uid, "settings", "config");
+    const updated = { ...monthlyBudgets };
+    if (amount > 0) {
+      updated[monthKey] = amount;
+    } else {
+      delete updated[monthKey];
+    }
+    await setDoc(docRef, { monthlyBudgets: updated }, { merge: true });
+  },
+
+  getBudgetForMonth: (monthKey) => {
+    const { monthlyBudgets } = get();
+    return monthlyBudgets[monthKey] || 0;
   },
 }));
