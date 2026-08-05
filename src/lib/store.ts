@@ -120,6 +120,7 @@ interface AuthState {
   logout: () => void;
   lock: () => void;
   unlock: (password: string) => Promise<boolean>;
+  deleteUser: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -195,6 +196,26 @@ export const useAuthStore = create<AuthState>()(
         set({ isLocked: false });
         return true;
       },
+
+      deleteUser: async (username, password) => {
+        const { users, currentUser } = get();
+        const normalized = username.trim().toLowerCase();
+        const user = users.find((u) => u.username === normalized);
+        if (!user) {
+          return { success: false, error: "User not found" };
+        }
+        const passwordHash = await simpleHash(password);
+        if (user.passwordHash !== passwordHash) {
+          return { success: false, error: "Incorrect password" };
+        }
+        const updatedUsers = users.filter((u) => u.username !== normalized);
+        const isDeletingSelf = currentUser === normalized;
+        set({
+          users: updatedUsers,
+          ...(isDeletingSelf ? { currentUser: null, isAuthenticated: false, isLocked: false } : {}),
+        });
+        return { success: true };
+      },
     }),
     {
       name: "expense-auth",
@@ -235,6 +256,7 @@ interface ExpenseState {
   addExpense: (expense: Omit<Expense, "id" | "createdAt">) => void;
   updateExpense: (id: string, username: string, expense: Partial<Expense>) => void;
   deleteExpense: (id: string, username: string) => void;
+  deleteExpensesForUser: (username: string) => void;
   getExpensesForUser: (username: string) => Expense[];
 }
 
@@ -263,6 +285,12 @@ export const useExpenseStore = create<ExpenseState>()(
       deleteExpense: (id, username) => {
         set((state) => ({
           expenses: state.expenses.filter((e) => !(e.id === id && e.username === username)),
+        }));
+      },
+
+      deleteExpensesForUser: (username) => {
+        set((state) => ({
+          expenses: state.expenses.filter((e) => e.username !== username),
         }));
       },
 

@@ -24,6 +24,7 @@ import {
   List,
   User,
   Settings,
+  Trash2,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { ExpenseForm } from "./expense-form";
@@ -31,6 +32,7 @@ import { ExpenseList } from "./expense-list";
 import { ExpenseChart } from "./expense-chart";
 import { SummaryCards } from "./summary-cards";
 import { SettingsDialog } from "./settings-dialog";
+import { DeleteAccountDialog } from "./delete-account-dialog";
 
 export function Dashboard() {
   const { theme, setTheme } = useTheme();
@@ -50,6 +52,7 @@ export function Dashboard() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const handleEdit = useCallback((expense: Expense) => {
@@ -155,6 +158,12 @@ export function Dashboard() {
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
+                  onClick={() => setDeleteAccountOpen(true)}
+                  className="text-destructive focus:text-destructive cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" /> Delete Account
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   onClick={logout}
                   className="text-destructive focus:text-destructive cursor-pointer"
                 >
@@ -247,6 +256,7 @@ export function Dashboard() {
         editingExpense={editingExpense}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <DeleteAccountDialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen} />
     </div>
   );
 }
