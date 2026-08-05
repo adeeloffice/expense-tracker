@@ -113,6 +113,8 @@ interface AuthState {
   currentUser: string | null;
   isLocked: boolean;
   isAuthenticated: boolean;
+  _hasHydrated: boolean;
+  setHydrated: () => void;
   signup: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
@@ -127,6 +129,11 @@ export const useAuthStore = create<AuthState>()(
       currentUser: null,
       isLocked: false,
       isAuthenticated: false,
+      _hasHydrated: false,
+
+      setHydrated: () => {
+        set({ _hasHydrated: true });
+      },
 
       signup: async (username, password) => {
         const { users } = get();
@@ -191,9 +198,14 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: "expense-auth",
+      onRehydrateStorage: () => (state) => {
+        if (state) state.setHydrated();
+      },
     }
   )
 );
+
+export const useAuthHydrated = () => useAuthStore((s) => s._hasHydrated);
 
 // --- Settings Store (currency + budget) ---
 interface SettingsState {

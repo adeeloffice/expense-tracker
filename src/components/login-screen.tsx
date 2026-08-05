@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAuthStore } from "@/lib/store";
+import { useAuthStore, useAuthHydrated } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +25,7 @@ export function LoginScreen() {
 
   const login = useAuthStore((s) => s.login);
   const signup = useAuthStore((s) => s.signup);
+  const hydrated = useAuthHydrated();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,12 +140,12 @@ export function LoginScreen() {
             <Button
               type="submit"
               className="w-full h-11 text-base font-semibold bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
-              disabled={isLoading}
+              disabled={isLoading || !hydrated}
             >
-              {isLoading ? (
+              {!hydrated || isLoading ? (
                 <span className="flex items-center gap-2">
                   <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  {isSignUp ? "Creating..." : "Signing in..."}
+                  {!hydrated ? "Loading..." : isSignUp ? "Creating..." : "Signing in..."}
                 </span>
               ) : (
                 <span className="flex items-center gap-2">
