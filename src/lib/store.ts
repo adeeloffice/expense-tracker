@@ -491,11 +491,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       }
     }
 
-    // Save recovery email to Firestore — ONLY update recoveryEmail field
+    // Save recovery email to Firestore
     // NEVER touch authEmail — that’s used for login
+    // Also update old "email" field so Firebase Console shows the new value
     try {
       await updateDoc(doc(db, "usernames", currentUser), {
         recoveryEmail: trimmedEmail,
+        email: trimmedEmail,
       });
     } catch {
       return { success: false, error: "Failed to save email. Please try again." };
