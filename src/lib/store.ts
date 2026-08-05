@@ -11,7 +11,7 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
-  firebaseUpdateEmail,
+  verifyBeforeUpdateEmail,
   sendPasswordResetEmail,
   firebaseDeleteUser,
   reauthenticateWithCredential,
@@ -142,7 +142,7 @@ interface AuthState {
   unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string }>;
-  updateUserEmail: (newEmail: string, password?: string) => Promise<{ success: boolean; error?: string; warning?: string }>;
+  updateUserEmail: (newEmail: string, password?: string) => Promise<{ success: boolean; error?: string; warning?: string; verificationSent?: boolean }>;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -419,34 +419,36 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     // Update the local state immediately
     set({ userEmail: trimmedEmail, needsEmailUpdate: false });
 
-    // Step 2: Try to update Firebase Auth email (best effort, for password reset to work)
-    // If no password provided, skip Firebase Auth update (email still saved in Firestore)
+    // Step 2: Try to send verification email (best effort, for password reset to work)
+    // Uses verifyBeforeUpdateEmail which sends a confirmation link to the new email
     if (!password) {
-      return { success: true, warning: "Email saved. To enable password reset, please re-login and update your email again with your password." };
+      return { success: true, verificationSent: false, warning: "Email saved. To enable password reset, enter your password below and save again." };
     }
 
     try {
       const currentEmail = auth.currentUser.email!;
       const credential = EmailAuthProvider.credential(currentEmail, password);
       const result = await reauthenticateWithCredential(auth.currentUser, credential);
-      // Use result.user (fresh reference) instead of auth.currentUser
-      await firebaseUpdateEmail(result.user, trimmedEmail);
-      return { success: true };
+      // Send verification email instead of directly updating
+      const actionCodeSettings = {
+        url: "https://expense-tracker-five-alpha-69.vercel.app/",
+      };
+      await verifyBeforeUpdateEmail(result.user, trimmedEmail, actionCodeSettings);
+      return { success: true, verificationSent: true };
     } catch (err: unknown) {
       const firebaseErr = err as { code?: string; message?: string };
       const code = firebaseErr.code || "";
       if (code === "auth/email-already-in-use") {
-        // Email saved in Firestore but can't update Firebase Auth
-        return { success: true, warning: "Email saved, but password reset may not work because this email is used by another account." };
+        return { success: true, verificationSent: false, warning: "Email saved, but password reset may not work because this email is already used by another account." };
       }
       if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
-        return { success: true, warning: "Email saved, but password reset is not activated. Please log out, log in again, then update your email with the correct password." };
+        return { success: true, verificationSent: false, warning: "Email saved, but verification failed. Please check your password and try again." };
       }
       if (code === "auth/too-many-requests") {
-        return { success: true, warning: "Email saved, but password reset activation failed due to too many attempts. Try again later." };
+        return { success: true, verificationSent: false, warning: "Email saved. Too many attempts for verification. Please try again later." };
       }
-      // For any other error, email is still saved in Firestore
-      return { success: true, warning: "Email saved in your profile. Password reset link will be sent to this email." };
+      // Email is still saved in Firestore for any other error
+      return { success: true, verificationSent: false, warning: "Email saved in your profile." };
     }
   },
 }));
