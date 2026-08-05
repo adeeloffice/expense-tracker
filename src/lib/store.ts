@@ -420,7 +420,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       set({ userEmail: trimmedEmail, needsEmailUpdate: false });
       return { success: true };
     } catch (err: unknown) {
-      const code = (err as { code?: string })?.code || "";
+      const firebaseErr = err as { code?: string; message?: string };
+      const code = firebaseErr.code || "";
+      const message = firebaseErr.message || "";
       if (code === "auth/email-already-in-use") {
         return { success: false, error: "This email is already used by another account" };
       }
@@ -430,7 +432,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
         return { success: false, error: "Incorrect password" };
       }
-      return { success: false, error: "Failed to update email. Please try again." };
+      if (code === "auth/too-many-requests") {
+        return { success: false, error: "Too many attempts. Please wait a moment and try again." };
+      }
+      return { success: false, error: message || "Failed to update email. Please try again." };
     }
   },
 }));
