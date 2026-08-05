@@ -224,6 +224,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return { success: false, error: "Password must be at least 6 characters" };
     }
     try {
+      // Check if username is already taken
+      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
+      if (usernameDoc.exists()) {
+        return { success: false, error: "Username is already taken. Choose a different username." };
+      }
+
       // Use real email if provided, otherwise fall back to @et.app
       const fbAuthEmail = trimmedEmail || usernameToEmail(normalized);
 

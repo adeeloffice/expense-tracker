@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useExpenseStore, useSettingsStore, formatCurrency, CATEGORIES, CATEGORY_COLORS, type Expense } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -57,6 +57,14 @@ export function ExpenseList({ expenses, onEdit, onDelete, initialMonth, onMonthC
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [mobileDetail, setMobileDetail] = useState<Expense | null>(null);
+
+  // Sync with dashboard month selector
+  useEffect(() => {
+    if (initialMonth) {
+      setFilterMonth(initialMonth);
+      setPage(1);
+    }
+  }, [initialMonth]);
 
   const fmt = (amount: number) => formatCurrency(amount, currencyCode);
 
