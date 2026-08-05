@@ -248,6 +248,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       // Create/update username → UID mapping
       // authEmail = email used in Firebase Auth (for login)
       // recoveryEmail = email for password reset (optional, NEVER used for login)
+      // Double-check username wasn't taken while we were creating the auth user
+      const recheck = await getDoc(doc(db, "usernames", normalized));
+      if (recheck.exists()) {
+        // Username was taken — clean up the Firebase user we just created
+        await cred.user.delete().catch(() => {});
+        return { success: false, error: "Username is already taken. Choose a different username." };
+      }
       await setDoc(doc(db, "usernames", normalized), {
         uid: cred.user.uid,
         authEmail: fbAuthEmail,
