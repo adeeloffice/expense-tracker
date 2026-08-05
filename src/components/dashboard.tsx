@@ -37,6 +37,9 @@ import {
   Trash2,
   Cloud,
   Mail,
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { ExpenseForm } from "./expense-form";
@@ -45,6 +48,18 @@ import { ExpenseChart } from "./expense-chart";
 import { SummaryCards } from "./summary-cards";
 import { SettingsDialog } from "./settings-dialog";
 import { DeleteAccountDialog } from "./delete-account-dialog";
+
+// Helper to get month key "YYYY-MM"
+function getMonthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// Format month key to display label
+function formatMonthLabel(key: string): string {
+  const [year, month] = key.split("-");
+  const d = new Date(parseInt(year), parseInt(month) - 1, 1);
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
 
 export function Dashboard() {
   const { theme, setTheme } = useTheme();
@@ -60,6 +75,9 @@ export function Dashboard() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+
+  // Month selector state
+  const [selectedMonth, setSelectedMonth] = useState<string>(getMonthKey(new Date()));
 
   // Add/Update recovery email
   const userEmail = useAuthStore((s) => s.userEmail);
@@ -126,12 +144,45 @@ export function Dashboard() {
     URL.revokeObjectURL(url);
   }, [expenses, currencyCode, currency.decimals]);
 
-  // Monthly bar chart data
+  // Build list of available months from ALL expenses
+  const availableMonths = useMemo(() => {
+    const monthSet = new Set<string>();
+    expenses.forEach((e) => {
+      const d = new Date(e.date + "T00:00:00");
+      monthSet.add(getMonthKey(d));
+    });
+    return Array.from(monthSet).sort().reverse();
+  }, [expenses]);
+
+  // Filter expenses for selected month
+  const monthExpenses = useMemo(() => {
+    return expenses.filter((e) => {
+      const d = new Date(e.date + "T00:00:00");
+      return getMonthKey(d) === selectedMonth;
+    });
+  }, [expenses, selectedMonth]);
+
+  // Month navigation
+  const goToPrevMonth = () => {
+    const [year, month] = selectedMonth.split("-").map(Number);
+    const d = new Date(year, month - 2, 1); // month-2 because JS months are 0-indexed and we want previous
+    setSelectedMonth(getMonthKey(d));
+  };
+
+  const goToNextMonth = () => {
+    const [year, month] = selectedMonth.split("-").map(Number);
+    const d = new Date(year, month, 1); // month is 1-indexed here, JS will roll over
+    setSelectedMonth(getMonthKey(d));
+  };
+
+  const isCurrentMonth = selectedMonth === getMonthKey(new Date());
+
+  // Monthly bar chart data (all months)
   const monthlyData = useMemo(() => {
     const map: Record<string, number> = {};
     expenses.forEach((e) => {
       const d = new Date(e.date + "T00:00:00");
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const key = getMonthKey(d);
       map[key] = (map[key] || 0) + e.amount;
     });
     return Object.entries(map)
@@ -226,12 +277,36 @@ export function Dashboard() {
 
       {/* Main Content */}
       <main className="flex-1 max-w-6xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
-        {/* Summary Cards + Budget */}
-        <SummaryCards expenses={expenses} />
-
-        {/* Quick Actions */}
-        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-          <h2 className="text-lg font-semibold">Expenses</h2>
+        {/* Month Selector */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 cursor-pointer"
+              onClick={goToPrevMonth}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <div className="flex items-center gap-2 bg-background border rounded-lg px-3 py-2 min-w-[180px] justify-center">
+              <CalendarDays className="w-4 h-4 text-emerald-500" />
+              <span className="font-semibold text-sm sm:text-base">{formatMonthLabel(selectedMonth)}</span>
+              {isCurrentMonth && (
+                <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">
+                  Current
+                </span>
+              )}
+            </div>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 cursor-pointer"
+              onClick={goToNextMonth}
+              disabled={isCurrentMonth}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
           <Button
             onClick={() => {
               setEditingExpense(null);
@@ -242,6 +317,9 @@ export function Dashboard() {
             <Plus className="w-4 h-4 mr-2" /> Add Expense
           </Button>
         </div>
+
+        {/* Summary Cards + Budget — filtered by selected month */}
+        <SummaryCards expenses={monthExpenses} selectedMonth={selectedMonth} />
 
         {/* Tabs: List & Charts */}
         <Tabs defaultValue="list" className="space-y-4">
@@ -259,6 +337,8 @@ export function Dashboard() {
               expenses={expenses}
               onEdit={handleEdit}
               onDelete={handleDelete}
+              initialMonth={selectedMonth}
+              onMonthChange={setSelectedMonth}
             />
           </TabsContent>
 
@@ -269,9 +349,10 @@ export function Dashboard() {
                   <CardTitle className="text-base font-semibold">
                     Spending by Category
                   </CardTitle>
+                  <p className="text-xs text-muted-foreground">{formatMonthLabel(selectedMonth)}</p>
                 </CardHeader>
                 <CardContent>
-                  <ExpenseChart expenses={expenses} />
+                  <ExpenseChart expenses={monthExpenses} />
                 </CardContent>
               </Card>
 
@@ -282,7 +363,7 @@ export function Dashboard() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <MonthlyBarChart data={monthlyData} />
+                  <MonthlyBarChart data={monthlyData} highlightMonth={selectedMonth} />
                 </CardContent>
               </Card>
             </div>
@@ -379,9 +460,9 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell } from "recharts";
 
-function MonthlyBarChart({ data }: { data: [string, number][] }) {
+function MonthlyBarChart({ data, highlightMonth }: { data: [string, number][]; highlightMonth?: string }) {
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const currency = getCurrency(currencyCode);
 
@@ -398,6 +479,8 @@ function MonthlyBarChart({ data }: { data: [string, number][] }) {
       year: "2-digit",
     }),
     amount: parseFloat(amount.toFixed(currency.decimals)),
+    isHighlighted: month === highlightMonth,
+    rawMonth: month,
   }));
 
   if (chartData.length === 0) {
@@ -425,7 +508,14 @@ function MonthlyBarChart({ data }: { data: [string, number][] }) {
           width={55}
         />
         <ChartTooltip content={<ChartTooltipContent />} />
-        <Bar dataKey="amount" fill="var(--color-amount)" radius={[6, 6, 0, 0]} />
+        <Bar dataKey="amount" radius={[6, 6, 0, 0]}>
+          {chartData.map((entry, index) => (
+            <Cell
+              key={`cell-${index}`}
+              fill={entry.isHighlighted ? "hsl(160, 60%, 45%)" : "hsl(160, 30%, 70%)"}
+            />
+          ))}
+        </Bar>
       </BarChart>
     </ChartContainer>
   );

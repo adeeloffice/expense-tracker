@@ -42,16 +42,18 @@ interface ExpenseListProps {
   expenses: Expense[];
   onEdit: (expense: Expense) => void;
   onDelete: (id: string) => void;
+  initialMonth?: string;
+  onMonthChange?: (month: string) => void;
 }
 
 const ITEMS_PER_PAGE = 8;
 
-export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
+export function ExpenseList({ expenses, onEdit, onDelete, initialMonth, onMonthChange }: ExpenseListProps) {
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [filterSort, setFilterSort] = useState<string>("date-desc");
-  const [filterMonth, setFilterMonth] = useState<string>("all");
+  const [filterMonth, setFilterMonth] = useState<string>(initialMonth || "all");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [mobileDetail, setMobileDetail] = useState<Expense | null>(null);
@@ -126,7 +128,11 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
   };
 
   // Reset page when filters change
-  const handleMonthChange = (v: string) => { setFilterMonth(v); setPage(1); };
+  const handleMonthChange = (v: string) => {
+    setFilterMonth(v);
+    setPage(1);
+    onMonthChange?.(v);
+  };
   const handleCategoryChange = (v: string) => { setFilterCategory(v); setPage(1); };
 
   return (

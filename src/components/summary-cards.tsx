@@ -6,31 +6,22 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
   DollarSign,
-  CalendarDays,
   Target,
   AlertTriangle,
+  Receipt,
 } from "lucide-react";
 
 interface SummaryCardsProps {
   expenses: Expense[];
+  selectedMonth?: string;
 }
 
-export function SummaryCards({ expenses }: SummaryCardsProps) {
+export function SummaryCards({ expenses, selectedMonth }: SummaryCardsProps) {
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const monthlyBudget = useSettingsStore((s) => s.monthlyBudget);
 
   const stats = useMemo(() => {
-    const now = new Date();
-    const thisMonth = now.getMonth();
-    const thisYear = now.getFullYear();
-
-    const monthExpenses = expenses.filter((e) => {
-      const d = new Date(e.date + "T00:00:00");
-      return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
-    });
-
-    const total = expenses.reduce((sum, e) => sum + e.amount, 0);
-    const monthTotal = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
+    const monthTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
 
     // Budget calculations
     const budgetUsed = monthlyBudget > 0 ? (monthTotal / monthlyBudget) * 100 : 0;
@@ -38,10 +29,8 @@ export function SummaryCards({ expenses }: SummaryCardsProps) {
     const overBudget = monthlyBudget > 0 && monthTotal > monthlyBudget;
 
     return {
-      total,
       monthTotal,
       count: expenses.length,
-      monthCount: monthExpenses.length,
       budgetUsed: Math.min(budgetUsed, 100),
       budgetRemaining,
       overBudget,
@@ -49,25 +38,6 @@ export function SummaryCards({ expenses }: SummaryCardsProps) {
   }, [expenses, monthlyBudget]);
 
   const fmt = (amount: number) => formatCurrency(amount, currencyCode);
-
-  const cards = [
-    {
-      title: "Total Spent",
-      value: fmt(stats.total),
-      description: `${stats.count} expense${stats.count !== 1 ? "s" : ""} total`,
-      icon: DollarSign,
-      color: "text-emerald-600 dark:text-emerald-400",
-      bg: "bg-emerald-50 dark:bg-emerald-950/50",
-    },
-    {
-      title: "This Month",
-      value: fmt(stats.monthTotal),
-      description: `${stats.monthCount} expense${stats.monthCount !== 1 ? "s" : ""} this month`,
-      icon: CalendarDays,
-      color: "text-blue-600 dark:text-blue-400",
-      bg: "bg-blue-50 dark:bg-blue-950/50",
-    },
-  ];
 
   return (
     <div className="space-y-4">
@@ -129,22 +99,40 @@ export function SummaryCards({ expenses }: SummaryCardsProps) {
 
       {/* Summary Cards Grid */}
       <div className="grid grid-cols-2 gap-3">
-        {cards.map((card) => (
-          <Card key={card.title} className="border shadow-sm">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  {card.title}
-                </p>
-                <div className={`${card.bg} p-2 rounded-lg`}>
-                  <card.icon className={`w-4 h-4 ${card.color}`} />
-                </div>
+        <Card className="border shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Total Spent
+              </p>
+              <div className="bg-emerald-50 dark:bg-emerald-950/50 p-2 rounded-lg">
+                <DollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
               </div>
-              <p className="text-xl sm:text-2xl font-bold tabular-nums">{card.value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{card.description}</p>
-            </CardContent>
-          </Card>
-        ))}
+            </div>
+            <p className="text-xl sm:text-2xl font-bold tabular-nums">{fmt(stats.monthTotal)}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {stats.count} expense{stats.count !== 1 ? "s" : ""} this month
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Transactions
+              </p>
+              <div className="bg-blue-50 dark:bg-blue-950/50 p-2 rounded-lg">
+                <Receipt className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              </div>
+            </div>
+            <p className="text-xl sm:text-2xl font-bold tabular-nums">{stats.count}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {stats.count === 0
+                ? "No expenses yet"
+                : `Avg ${fmt(stats.count > 0 ? stats.monthTotal / stats.count : 0)} per expense`}
+            </p>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

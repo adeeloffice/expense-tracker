@@ -25,6 +25,8 @@ import {
   setDoc,
   getDocs,
   writeBatch,
+  query,
+  where,
 } from "@/lib/firebase";
 import type { Unsubscribe } from "firebase/firestore";
 
@@ -140,7 +142,7 @@ interface AuthState {
   lock: () => void;
   unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
-  forgotPassword: (username: string) => Promise<{ success: boolean; error?: string }>;
+  forgotPassword: (username: string) => Promise<{ success: boolean; error?: string; email?: string }>;
   updateUserEmail: (newEmail: string) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -163,22 +165,21 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       if (firebaseUser) {
         const email = firebaseUser.email || "";
         const username = firebaseUser.displayName || email.split("@")[0];
-        const isFakeEmail = email.endsWith("@et.app");
 
+        // Load recovery email from Firestore (separate from auth email)
         let recoveryEmail: string | null = null;
-        if (isFakeEmail && db) {
-          // User signed up without email — check Firestore for recovery email
+        if (db) {
           try {
             const usernameDoc = await getDoc(doc(db, "usernames", username));
             if (usernameDoc.exists()) {
-              const stored = usernameDoc.data().email;
+              const data = usernameDoc.data();
+              // Read from recoveryEmail field (new), fall back to email field (old)
+              const stored = data.recoveryEmail || data.email;
               if (stored && !stored.endsWith("@et.app")) {
                 recoveryEmail = stored;
               }
             }
           } catch { /* ignore */ }
-        } else if (!isFakeEmail) {
-          recoveryEmail = email;
         }
 
         set({
@@ -224,12 +225,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
     try {
       // Use real email if provided, otherwise fall back to @et.app
-      const authEmail = trimmedEmail || usernameToEmail(normalized);
+      const fbAuthEmail = trimmedEmail || usernameToEmail(normalized);
 
       // Try creating the Firebase Auth user FIRST
       // This handles the case where a user was deleted from Firebase Console
       // but the usernames doc still exists in Firestore
-      const cred = await createUserWithEmailAndPassword(auth, authEmail, password);
+      const cred = await createUserWithEmailAndPassword(auth, fbAuthEmail, password);
       await updateProfile(cred.user, { displayName: normalized });
 
       // Create default settings in Firestore
@@ -238,11 +239,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         monthlyBudget: 0,
       });
 
-      // Create/update username → UID + email mapping
-      // (setDoc overwrites any orphaned doc from a deleted user)
+      // Create/update username → UID mapping
+      // authEmail = email used in Firebase Auth (for login)
+      // recoveryEmail = email for password reset (optional, NEVER used for login)
       await setDoc(doc(db, "usernames", normalized), {
         uid: cred.user.uid,
-        email: trimmedEmail || null,
+        authEmail: fbAuthEmail,
+        recoveryEmail: trimmedEmail || null,
       });
 
       set({
@@ -275,35 +278,35 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
     const normalized = username.trim().toLowerCase();
     try {
-      // Look up the user's email from Firestore FIRST
-      let email: string | null = null;
-      let userExists = false;
+      // Look up the username doc to check if user exists
       const usernameDoc = await getDoc(doc(db, "usernames", normalized));
-      if (usernameDoc.exists()) {
-        userExists = true;
-        email = usernameDoc.data().email || null;
-      }
-      // Fall back to fake email for users without real email
-      if (!email) {
-        email = usernameToEmail(normalized);
+      if (!usernameDoc.exists()) {
+        return { success: false, error: "User not found. Please sign up first." };
       }
 
-      await signInWithEmailAndPassword(auth, email, password);
+      // Use authEmail for login (the email used during Firebase Auth signup)
+      // NEVER use recoveryEmail for login — it’s only for password reset
+      const data = usernameDoc.data();
+      let loginEmail = data.authEmail || usernameToEmail(normalized);
+
+      // Auto-migrate old docs: if authEmail field doesn’t exist, set it now
+      if (!data.authEmail) {
+        const correctAuthEmail = usernameToEmail(normalized);
+        updateDoc(doc(db, "usernames", normalized), { authEmail: correctAuthEmail }).catch(() => {});
+        loginEmail = correctAuthEmail;
+      }
+
+      await signInWithEmailAndPassword(auth, loginEmail, password);
       return { success: true };
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || "";
-      // Distinguish wrong password from user not found
+      // Username exists (we checked above), so it must be wrong password
       if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
-        // Check if username exists in Firestore
-        const usernameDoc = await getDoc(doc(db!, "usernames", normalized));
-        if (usernameDoc.exists()) {
-          return { success: false, error: "Incorrect password" };
-        }
-        // Clean up orphaned doc if Firebase user was deleted
-        await deleteDoc(doc(db!, "usernames", normalized)).catch(() => {});
-        return { success: false, error: "User not found. Please sign up first." };
+        return { success: false, error: "Incorrect password" };
       }
       if (code === "auth/user-not-found") {
+        // Orphaned Firestore doc — clean up
+        await deleteDoc(doc(db, "usernames", normalized)).catch(() => {});
         return { success: false, error: "User not found. Please sign up first." };
       }
       return { success: false, error: "Login failed. Please try again." };
@@ -392,16 +395,17 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
     const normalized = username.trim().toLowerCase();
     try {
-      // Look up the user’s email from Firestore
+      // Look up the user’s recovery email from Firestore
       const usernameDoc = await getDoc(doc(db, "usernames", normalized));
       if (!usernameDoc.exists()) {
         return { success: false, error: "Username not found" };
       }
       const data = usernameDoc.data();
-      const email = data.email;
+      // Use recoveryEmail field (new), fall back to email field (old docs)
+      const recoveryEmail = data.recoveryEmail || data.email;
 
       // Check if the user has a real recovery email
-      if (!email || email.endsWith("@et.app")) {
+      if (!recoveryEmail || recoveryEmail.endsWith("@et.app")) {
         return {
           success: false,
           error: "This account was created without a recovery email. Please create a new account with your email to enable password reset.",
@@ -409,10 +413,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       }
 
       // Send Firebase password reset email
-      await sendPasswordResetEmail(auth, email, {
+      await sendPasswordResetEmail(auth, recoveryEmail, {
         url: "https://expense-tracker-five-alpha-69.vercel.app/",
       });
-      return { success: true, email };
+      return { success: true, email: recoveryEmail };
     } catch {
       return { success: false, error: "Failed to send reset email. Please try again." };
     }
@@ -431,9 +435,42 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return { success: false, error: "Please enter a valid email address" };
     }
 
-    // Save recovery email to Firestore
+    // Check if this email is already used by another account
     try {
-      await updateDoc(doc(db, "usernames", currentUser), { email: trimmedEmail });
+      const q = query(
+        collection(db, "usernames"),
+        where("recoveryEmail", "==", trimmedEmail)
+      );
+      const snapshot = await getDocs(q);
+      for (const d of snapshot.docs) {
+        if (d.id !== currentUser) {
+          return { success: false, error: "This email is already used by another account" };
+        }
+      }
+      // Also check old field name for backward compat
+      const q2 = query(
+        collection(db, "usernames"),
+        where("email", "==", trimmedEmail)
+      );
+      const snapshot2 = await getDocs(q2);
+      for (const d of snapshot2.docs) {
+        if (d.id !== currentUser) {
+          // Only flag if this doc doesn't already have recoveryEmail set
+          if (!d.data().recoveryEmail) {
+            return { success: false, error: "This email is already used by another account" };
+          }
+        }
+      }
+    } catch {
+      // If query fails (e.g., missing index), continue anyway
+    }
+
+    // Save recovery email to Firestore — ONLY update recoveryEmail field
+    // NEVER touch authEmail — that’s used for login
+    try {
+      await updateDoc(doc(db, "usernames", currentUser), {
+        recoveryEmail: trimmedEmail,
+      });
     } catch {
       return { success: false, error: "Failed to save email. Please try again." };
     }
