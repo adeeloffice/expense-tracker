@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useExpenseStore, CATEGORIES, type Expense } from "@/lib/store";
+import { useState, useCallback } from "react";
+import { useExpenseStore, useSettingsStore, getCurrency, CATEGORIES, type Expense } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +32,8 @@ interface ExpenseFormProps {
 export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormProps) {
   const addExpense = useExpenseStore((s) => s.addExpense);
   const updateExpense = useExpenseStore((s) => s.updateExpense);
+  const currencyCode = useSettingsStore((s) => s.currencyCode);
+  const currency = getCurrency(currencyCode);
 
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
@@ -39,8 +41,11 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
   const [date, setDate] = useState("");
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [initialized, setInitialized] = useState(false);
 
-  useEffect(() => {
+  // Sync from props when dialog opens (avoid useEffect pattern)
+  if (open && !initialized) {
+    setInitialized(true);
     if (editingExpense) {
       setTitle(editingExpense.title);
       setAmount(editingExpense.amount.toString());
@@ -48,18 +53,17 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
       setDate(editingExpense.date);
       setNote(editingExpense.note);
     } else {
-      resetForm();
+      setTitle("");
+      setAmount("");
+      setCategory("");
+      setDate(new Date().toISOString().split("T")[0]);
+      setNote("");
     }
-  }, [editingExpense, open]);
-
-  const resetForm = () => {
-    setTitle("");
-    setAmount("");
-    setCategory("");
-    setDate(new Date().toISOString().split("T")[0]);
-    setNote("");
     setErrors({});
-  };
+  }
+  if (!open && initialized) {
+    setInitialized(false);
+  }
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -77,7 +81,7 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
 
     const expenseData = {
       title: title.trim(),
-      amount: parseFloat(parseFloat(amount).toFixed(2)),
+      amount: parseFloat(parseFloat(amount).toFixed(currency.decimals)),
       category,
       date,
       note: note.trim(),
@@ -89,6 +93,7 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
       addExpense(expenseData);
     }
 
+    setInitialized(false);
     onOpenChange(false);
   };
 
@@ -125,13 +130,13 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label htmlFor="amount">Amount ($)</Label>
+              <Label htmlFor="amount">Amount ({currency.symbol})</Label>
               <Input
                 id="amount"
                 type="number"
-                step="0.01"
+                step={currency.decimals === 0 ? "1" : currency.decimals === 3 ? "0.001" : "0.01"}
                 min="0"
-                placeholder="0.00"
+                placeholder={currency.decimals === 0 ? "0" : currency.decimals === 3 ? "0.000" : "0.00"}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 className="h-11"
@@ -185,7 +190,10 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={() => {
+                setInitialized(false);
+                onOpenChange(false);
+              }}
               className="cursor-pointer"
             >
               Cancel

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
-import { useAuthStore, useExpenseStore, type Expense } from "@/lib/store";
+import { useAuthStore, useExpenseStore, useSettingsStore, formatCurrency, getCurrency, type Expense } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -23,12 +23,14 @@ import {
   BarChart3,
   List,
   User,
+  Settings,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { ExpenseForm } from "./expense-form";
 import { ExpenseList } from "./expense-list";
 import { ExpenseChart } from "./expense-chart";
 import { SummaryCards } from "./summary-cards";
+import { SettingsDialog } from "./settings-dialog";
 
 export function Dashboard() {
   const { theme, setTheme } = useTheme();
@@ -37,8 +39,11 @@ export function Dashboard() {
   const logout = useAuthStore((s) => s.logout);
   const expenses = useExpenseStore((s) => s.expenses);
   const deleteExpense = useExpenseStore((s) => s.deleteExpense);
+  const currencyCode = useSettingsStore((s) => s.currencyCode);
+  const currency = getCurrency(currencyCode);
 
   const [formOpen, setFormOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const handleEdit = useCallback((expense: Expense) => {
@@ -55,10 +60,10 @@ export function Dashboard() {
 
   const exportCSV = useCallback(() => {
     if (expenses.length === 0) return;
-    const headers = ["Title", "Amount", "Category", "Date", "Note"];
+    const headers = ["Title", `Amount (${currencyCode})`, "Category", "Date", "Note"];
     const rows = expenses.map((e) => [
       `"${e.title}"`,
-      e.amount.toFixed(2),
+      e.amount.toFixed(currency.decimals),
       `"${e.category}"`,
       e.date,
       e.note ? `"${e.note.replace(/"/g, '""')}"` : "",
@@ -71,7 +76,7 @@ export function Dashboard() {
     a.download = `expenses-${new Date().toISOString().split("T")[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [expenses]);
+  }, [expenses, currencyCode, currency.decimals]);
 
   // Monthly bar chart data
   const monthlyData = useMemo(() => {
@@ -83,7 +88,7 @@ export function Dashboard() {
     });
     return Object.entries(map)
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(-6); // Last 6 months
+      .slice(-6);
   }, [expenses]);
 
   return (
@@ -97,11 +102,22 @@ export function Dashboard() {
             </div>
             <div className="hidden sm:block">
               <h1 className="text-lg font-bold leading-tight">Expense Tracker</h1>
-              <p className="text-xs text-muted-foreground">Hi, {currentUser}</p>
+              <p className="text-xs text-muted-foreground">
+                Hi, <span className="capitalize">{currentUser}</span> &middot; {currency.symbol} {currency.code}
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 cursor-pointer"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -121,7 +137,7 @@ export function Dashboard() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 <div className="px-2 py-1.5">
-                  <p className="text-sm font-medium">{currentUser}</p>
+                  <p className="text-sm font-medium capitalize">{currentUser}</p>
                   <p className="text-xs text-muted-foreground">Personal Account</p>
                 </div>
                 <DropdownMenuSeparator />
@@ -146,7 +162,7 @@ export function Dashboard() {
 
       {/* Main Content */}
       <main className="flex-1 max-w-6xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
-        {/* Summary Cards */}
+        {/* Summary Cards + Budget */}
         <SummaryCards expenses={expenses} />
 
         {/* Quick Actions */}
@@ -215,7 +231,7 @@ export function Dashboard() {
         <p>Expense Tracker &middot; Your data is stored locally on this device</p>
       </footer>
 
-      {/* Expense Form Dialog */}
+      {/* Dialogs */}
       <ExpenseForm
         open={formOpen}
         onOpenChange={(open) => {
@@ -224,6 +240,7 @@ export function Dashboard() {
         }}
         editingExpense={editingExpense}
       />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
 }
@@ -238,6 +255,9 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 
 function MonthlyBarChart({ data }: { data: [string, number][] }) {
+  const currencyCode = useSettingsStore((s) => s.currencyCode);
+  const currency = getCurrency(currencyCode);
+
   const chartConfig: ChartConfig = {
     amount: {
       label: "Spending",
@@ -250,7 +270,7 @@ function MonthlyBarChart({ data }: { data: [string, number][] }) {
       month: "short",
       year: "2-digit",
     }),
-    amount: parseFloat(amount.toFixed(2)),
+    amount: parseFloat(amount.toFixed(currency.decimals)),
   }));
 
   if (chartData.length === 0) {
@@ -274,7 +294,7 @@ function MonthlyBarChart({ data }: { data: [string, number][] }) {
         <YAxis
           tickLine={false}
           axisLine={false}
-          tickFormatter={(v: number) => `$${v}`}
+          tickFormatter={(v: number) => `${currency.symbol}${v}`}
           width={55}
         />
         <ChartTooltip content={<ChartTooltipContent />} />

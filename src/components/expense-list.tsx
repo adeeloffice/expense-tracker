@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useExpenseStore, CATEGORIES, CATEGORY_COLORS, type Expense } from "@/lib/store";
+import { useExpenseStore, useSettingsStore, formatCurrency, CATEGORIES, CATEGORY_COLORS, type Expense } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -47,12 +47,15 @@ interface ExpenseListProps {
 const ITEMS_PER_PAGE = 8;
 
 export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
+  const currencyCode = useSettingsStore((s) => s.currencyCode);
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [filterSort, setFilterSort] = useState<string>("date-desc");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [mobileDetail, setMobileDetail] = useState<Expense | null>(null);
+
+  const fmt = (amount: number) => formatCurrency(amount, currencyCode);
 
   // Filter and sort
   const filtered = expenses
@@ -142,8 +145,8 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
             <SelectContent>
               <SelectItem value="date-desc">Newest first</SelectItem>
               <SelectItem value="date-asc">Oldest first</SelectItem>
-              <SelectItem value="amount-desc">Highest $</SelectItem>
-              <SelectItem value="amount-asc">Lowest $</SelectItem>
+              <SelectItem value="amount-desc">Highest {currencyCode}</SelectItem>
+              <SelectItem value="amount-asc">Lowest {currencyCode}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -194,7 +197,7 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
                     {formatDate(expense.date)}
                   </TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">
-                    ${expense.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                    {fmt(expense.amount)}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
@@ -252,7 +255,7 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
                   </p>
                 </div>
                 <p className="font-bold tabular-nums ml-3">
-                  ${expense.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                  {fmt(expense.amount)}
                 </p>
               </div>
               <Badge
@@ -280,7 +283,7 @@ export function ExpenseList({ expenses, onEdit, onDelete }: ExpenseListProps) {
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Amount</span>
               <span className="text-2xl font-bold">
-                ${mobileDetail?.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                {mobileDetail ? fmt(mobileDetail.amount) : ""}
               </span>
             </div>
             <div className="flex justify-between items-center">
