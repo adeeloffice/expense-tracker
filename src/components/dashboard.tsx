@@ -37,8 +37,14 @@ export function Dashboard() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const lock = useAuthStore((s) => s.lock);
   const logout = useAuthStore((s) => s.logout);
-  const expenses = useExpenseStore((s) => s.expenses);
+  const allExpenses = useExpenseStore((s) => s.expenses);
   const deleteExpense = useExpenseStore((s) => s.deleteExpense);
+
+  // Only show current user's expenses
+  const expenses = useMemo(
+    () => allExpenses.filter((e) => e.username === currentUser),
+    [allExpenses, currentUser]
+  );
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const currency = getCurrency(currencyCode);
 
@@ -53,9 +59,9 @@ export function Dashboard() {
 
   const handleDelete = useCallback(
     (id: string) => {
-      deleteExpense(id);
+      if (currentUser) deleteExpense(id, currentUser);
     },
-    [deleteExpense]
+    [deleteExpense, currentUser]
   );
 
   const exportCSV = useCallback(() => {

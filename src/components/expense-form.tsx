@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { useExpenseStore, useSettingsStore, getCurrency, CATEGORIES, type Expense } from "@/lib/store";
+import { useExpenseStore, useSettingsStore, useAuthStore, getCurrency, CATEGORIES, type Expense } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +32,7 @@ interface ExpenseFormProps {
 export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormProps) {
   const addExpense = useExpenseStore((s) => s.addExpense);
   const updateExpense = useExpenseStore((s) => s.updateExpense);
+  const currentUser = useAuthStore((s) => s.currentUser);
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const currency = getCurrency(currencyCode);
 
@@ -80,6 +81,7 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
     if (!validate()) return;
 
     const expenseData = {
+      username: currentUser || "",
       title: title.trim(),
       amount: parseFloat(parseFloat(amount).toFixed(currency.decimals)),
       category,
@@ -88,7 +90,7 @@ export function ExpenseForm({ open, onOpenChange, editingExpense }: ExpenseFormP
     };
 
     if (editingExpense) {
-      updateExpense(editingExpense.id, expenseData);
+      updateExpense(editingExpense.id, currentUser || "", expenseData);
     } else {
       addExpense(expenseData);
     }

@@ -6,6 +6,7 @@ import { persist } from "zustand/middleware";
 // --- Types ---
 export interface Expense {
   id: string;
+  username: string; // owner of this expense
   title: string;
   amount: number;
   category: string;
@@ -220,13 +221,14 @@ export const useSettingsStore = create<SettingsState>()(
 interface ExpenseState {
   expenses: Expense[];
   addExpense: (expense: Omit<Expense, "id" | "createdAt">) => void;
-  updateExpense: (id: string, expense: Partial<Expense>) => void;
-  deleteExpense: (id: string) => void;
+  updateExpense: (id: string, username: string, expense: Partial<Expense>) => void;
+  deleteExpense: (id: string, username: string) => void;
+  getExpensesForUser: (username: string) => Expense[];
 }
 
 export const useExpenseStore = create<ExpenseState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       expenses: [],
 
       addExpense: (expense) => {
@@ -238,18 +240,22 @@ export const useExpenseStore = create<ExpenseState>()(
         set((state) => ({ expenses: [...state.expenses, newExpense] }));
       },
 
-      updateExpense: (id, updates) => {
+      updateExpense: (id, username, updates) => {
         set((state) => ({
           expenses: state.expenses.map((e) =>
-            e.id === id ? { ...e, ...updates } : e
+            e.id === id && e.username === username ? { ...e, ...updates } : e
           ),
         }));
       },
 
-      deleteExpense: (id) => {
+      deleteExpense: (id, username) => {
         set((state) => ({
-          expenses: state.expenses.filter((e) => e.id !== id),
+          expenses: state.expenses.filter((e) => !(e.id === id && e.username === username)),
         }));
+      },
+
+      getExpensesForUser: (username) => {
+        return get().expenses.filter((e) => e.username === username);
       },
     }),
     {
