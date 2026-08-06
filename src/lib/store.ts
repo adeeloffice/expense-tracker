@@ -13,6 +13,7 @@ import {
   updateProfile,
   sendPasswordResetEmail,
   firebaseUpdateEmail,
+  firebaseVerifyBeforeUpdateEmail,
   firebaseDeleteUser,
   reauthenticateWithCredential,
   EmailAuthProvider,
@@ -145,7 +146,7 @@ interface AuthState {
   unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string; email?: string }>;
-  updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string; verificationSent?: boolean }>;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -519,7 +520,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       }
     }
 
-    // Step 1: Re-authenticate then update Firebase Auth email FIRST
+    // Step 1: Re-authenticate, then send verification email to the new address
     try {
       // Capture the current user reference before re-auth (it may change after re-auth)
       const userBefore = auth.currentUser!;
@@ -529,12 +530,14 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       // Use the refreshed user reference from re-auth result
       const refreshedUser = result.user;
       if (refreshedUser.email !== trimmedEmail) {
-        await firebaseUpdateEmail(refreshedUser, trimmedEmail);
+        // Firebase project requires email verification before changing — use verifyBeforeUpdateEmail
+        // This sends a verification link to the new email; the email changes only after the user clicks it
+        await firebaseVerifyBeforeUpdateEmail(refreshedUser, trimmedEmail);
       }
     } catch (authErr: unknown) {
       const code = (authErr as { code?: string })?.code || "";
       const message = (authErr as { message?: string })?.message || "";
-      console.error("Firebase Auth email update failed:", code, message);
+      console.error("Firebase Auth email verification failed:", code, message);
       if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
         return { success: false, error: "Incorrect password. Please try again." };
       }
@@ -547,24 +550,22 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       if (code === "auth/invalid-email") {
         return { success: false, error: "Invalid email format. Please check and try again." };
       }
-      // If Firebase Auth email update fails for any reason, don't update Firestore either
-      return { success: false, error: `Failed to update email: ${message || "Unknown error"}. Please try again.` };
+      return { success: false, error: `Failed to send verification: ${message || "Unknown error"}` };
     }
 
-    // Step 2: Only after Firebase Auth succeeds, update Firestore
+    // Step 2: Save recovery email to Firestore immediately (so UI shows it)
     try {
       await updateDoc(doc(db, "usernames", currentUser), {
         recoveryEmail: trimmedEmail,
         email: trimmedEmail,
-        authEmail: trimmedEmail,
       });
     } catch {
-      // Firestore update failed but Firebase Auth is already updated — acceptable
+      // Firestore update failed but verification email was sent — acceptable
     }
 
     // Update local state
     set({ userEmail: trimmedEmail, needsEmailUpdate: false });
-    return { success: true };
+    return { success: true, verificationSent: true };
   },
 }));
 

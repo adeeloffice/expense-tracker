@@ -14,6 +14,7 @@ import {
   EmailAuthProvider,
   sendPasswordResetEmail,
   updateEmail as firebaseUpdateEmail,
+  verifyBeforeUpdateEmail as firebaseVerifyBeforeUpdateEmail,
   type User,
 } from "firebase/auth";
 import {
@@ -72,6 +73,7 @@ export {
   updateProfile,
   sendPasswordResetEmail,
   firebaseUpdateEmail,
+  firebaseVerifyBeforeUpdateEmail,
   firebaseDeleteUser,
   reauthenticateWithCredential,
   EmailAuthProvider,
