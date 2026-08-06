@@ -129,8 +129,8 @@ export function LoginScreen() {
       if (!result.success) {
         if (result.error === 'verify_email' && result.pendingUser) {
           setPendingVerify({ email: result.pendingUser.email });
-          setResendSuccess(true);
-          startCooldown(60);
+          // Small cooldown to prevent accidental double-click on resend
+          startCooldown(10);
         } else {
           setError(result.error || "Login failed");
         }
@@ -181,8 +181,9 @@ export function LoginScreen() {
         startCooldown(120);
       } else {
         setError(result.error || "Failed to resend");
-        if ((result.error || "").includes("Too many")) {
-          startCooldown(120);
+        // Longer cooldown on rate-limit error
+        if ((result.error || "").includes("Too many") || (result.error || "").includes("wait")) {
+          startCooldown(180);
         }
       }
     } finally {
@@ -423,11 +424,14 @@ export function LoginScreen() {
                     Please verify your email first to login.
                   </p>
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    A verification link has been sent to <span className="font-semibold">{pendingVerify.email}</span>. The link will expire in 1 hour.
+                    A verification link was sent to <span className="font-semibold">{pendingVerify.email}</span> when you signed up. Check your inbox and spam folder.
+                  </p>
+                  <p className="text-xs text-amber-600/70 dark:text-amber-400/70">
+                    Note: Each new resend invalidates the previous link. Only use the latest link received.
                   </p>
                   {resendSuccess ? (
                     <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                      Verification link resent! Check your inbox.
+                      Verification link sent! Check your inbox.
                     </p>
                   ) : resendCooldown > 0 ? (
                     <p className="text-xs text-muted-foreground">
@@ -506,6 +510,7 @@ export function LoginScreen() {
               <p className="font-semibold text-foreground">{verifyEmail}</p>
               <p className="text-xs">Click the link in the email to verify your account. After verification, you can sign in with your username and password.</p>
               <p className="text-xs">Check your inbox and spam/junk folder if you don&apos;t see it.</p>
+              <p className="text-xs text-amber-600/70 dark:text-amber-400/70">Note: If you resend the verification later, the old link will stop working. Always use the latest link.</p>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
