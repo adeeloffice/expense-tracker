@@ -314,56 +314,49 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         return { success: false, error: "User not found. Please sign up first." };
       }
 
-      // Use authEmail for login (the email used during Firebase Auth signup)
-      // NEVER use recoveryEmail for login — it’s only for password reset
       const data = usernameDoc.data();
-      let loginEmail = data.authEmail || usernameToEmail(normalized);
+      const fallbackEmail = usernameToEmail(normalized);
+      const loginEmail = data.authEmail || fallbackEmail;
 
-      // Auto-migrate old docs: if authEmail field doesn’t exist, set it now
+      // Auto-migrate old docs: if authEmail field doesn't exist, set it now
       if (!data.authEmail) {
-        const correctAuthEmail = usernameToEmail(normalized);
-        updateDoc(doc(db, "usernames", normalized), { authEmail: correctAuthEmail }).catch(() => {});
-        loginEmail = correctAuthEmail;
+        updateDoc(doc(db, "usernames", normalized), { authEmail: fallbackEmail }).catch(() => {});
       }
 
-      await signInWithEmailAndPassword(auth, loginEmail, password);
-      return { success: true };
-    } catch (err: unknown) {
-      const code = (err as { code?: string })?.code || "";
-      if (code === "auth/user-not-found") {
-        // authEmail in Firestore might not match Firebase Auth yet (pending email verification)
-        // Fall back to @et.app email
-        const fallbackEmail = usernameToEmail(normalized);
+      // If authEmail is not the @et.app email, try it first.
+      // If it fails, fall back to @et.app (Firebase Auth might still have the old email
+      // if the user hasn't clicked the verification link yet).
+      // NOTE: Firebase email enumeration protection returns auth/invalid-credential
+      // for BOTH "wrong password" and "user not found", so we must try both.
+      if (loginEmail !== fallbackEmail) {
         try {
-          await signInWithEmailAndPassword(auth, fallbackEmail, password);
-          // Login succeeded with fallback — update authEmail in Firestore to match
-          updateDoc(doc(db, "usernames", normalized), { authEmail: fallbackEmail }).catch(() => {});
+          await signInWithEmailAndPassword(auth, loginEmail, password);
           return { success: true };
         } catch {
-          // Fallback also failed — clean up orphaned Firestore data
-          try {
-            const data = (await getDoc(doc(db, "usernames", normalized))).data();
-            const uid = data?.uid;
-            if (uid) {
-              const expensesSnapshot = await getDocs(collection(db, "users", uid, "expenses"));
-              if (!expensesSnapshot.empty) {
-                const batch = writeBatch(db);
-                expensesSnapshot.docs.forEach((d) => batch.delete(d.ref));
-                await batch.commit();
-              }
-              await deleteDoc(doc(db, "users", uid, "settings", "config")).catch(() => {});
-            }
-          } catch { /* best effort cleanup */ }
-          await deleteDoc(doc(db, "usernames", normalized)).catch(() => {});
-          return { success: false, error: "User not found. Please sign up first." };
+          // authEmail did not work - fall through to try @et.app email
         }
       }
-      if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
-        return { success: false, error: "Incorrect password" };
+
+      // Try @et.app email (original signup email or fallback)
+      try {
+        await signInWithEmailAndPassword(auth, fallbackEmail, password);
+        // If authEmail in Firestore was different, sync it to the working email
+        if (loginEmail !== fallbackEmail) {
+          updateDoc(doc(db, "usernames", normalized), { authEmail: fallbackEmail }).catch(() => {});
+        }
+        return { success: true };
+      } catch (err2: unknown) {
+        const code = (err2 as { code?: string })?.code || "";
+        if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+          return { success: false, error: "Incorrect password" };
+        }
+        return { success: false, error: "Login failed. Please try again." };
       }
+    } catch {
       return { success: false, error: "Login failed. Please try again." };
     }
   },
+
 
   logout: async () => {
     if (!auth) return;
