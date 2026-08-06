@@ -427,9 +427,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       // If the user has been idle, the token may be stale.
       await user.getIdToken(true);
 
-      await firebaseSendEmailVerification(user, {
-        url: typeof window !== 'undefined' ? window.location.origin : undefined,
-      });
+      // Do NOT pass url parameter — it requires the domain to be in Firebase's
+      // authorized domains list. Signup sends without url and it works.
+      await firebaseSendEmailVerification(user);
       return { success: true };
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || "";
@@ -441,7 +441,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       if (code === "auth/network-request-failed") {
         return { success: false, error: "network_error" };
       }
-      return { success: false, error: "Failed to resend verification email. Please wait 2-3 minutes and try again." };
+      // Expose the actual Firebase error code so we can debug
+      return { success: false, error: `Failed to resend [${code || "unknown"}]. Please wait 2-3 minutes and try again.` };
     }
   },
 
