@@ -129,8 +129,8 @@ export function LoginScreen() {
       if (!result.success) {
         if (result.error === 'verify_email' && result.pendingUser) {
           setPendingVerify({ email: result.pendingUser.email });
-          setResendSuccess(false);
-          startCooldown(10);
+          setResendSuccess(true);
+          startCooldown(60);
         } else {
           setError(result.error || "Login failed");
         }
@@ -178,11 +178,11 @@ export function LoginScreen() {
       const result = await resendVerification(pendingVerify.email, password);
       if (result.success) {
         setResendSuccess(true);
-        startCooldown(60);
+        startCooldown(120);
       } else {
         setError(result.error || "Failed to resend");
         if ((result.error || "").includes("Too many")) {
-          startCooldown(30);
+          startCooldown(120);
         }
       }
     } finally {
@@ -423,7 +423,7 @@ export function LoginScreen() {
                     Please verify your email first to login.
                   </p>
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    A verification link was sent to <span className="font-semibold">{pendingVerify.email}</span>. The link will expire in 1 hour.
+                    A verification link has been sent to <span className="font-semibold">{pendingVerify.email}</span>. The link will expire in 1 hour.
                   </p>
                   {resendSuccess ? (
                     <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">

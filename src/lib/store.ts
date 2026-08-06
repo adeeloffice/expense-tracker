@@ -351,7 +351,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
       // For real emails, check if verified
       if (!cred.user.emailVerified) {
-        // Remember the user for resend functionality
+        // Send verification BEFORE signing out (user is already authenticated here)
+        // This avoids the need to re-authenticate for resend, which triggers Firebase rate limits
+        try {
+          await firebaseSendEmailVerification(cred.user, {
+            url: typeof window !== 'undefined' ? window.location.origin : undefined,
+          });
+        } catch { /* ignore if send fails */ }
         const pendingUser = { uid: cred.user.uid, email: cred.user.email! };
         await signOut(auth);
         return { success: false, error: "verify_email", pendingUser };
