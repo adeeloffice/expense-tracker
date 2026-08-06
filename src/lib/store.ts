@@ -513,18 +513,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       }
     }
 
-    // Save to Firestore: recoveryEmail, old email field, AND authEmail
-    try {
-      await updateDoc(doc(db, "usernames", currentUser), {
-        recoveryEmail: trimmedEmail,
-        email: trimmedEmail,
-        authEmail: trimmedEmail,
-      });
-    } catch {
-      return { success: false, error: "Failed to save email. Please try again." };
-    }
-
-    // Re-authenticate then update Firebase Auth email
+    // Step 1: Re-authenticate then update Firebase Auth email FIRST
     try {
       const currentAuthEmail = auth.currentUser!.email!;
       const credential = EmailAuthProvider.credential(currentAuthEmail, password);
@@ -537,7 +526,22 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
         return { success: false, error: "Incorrect password. Please try again." };
       }
-      // Other auth errors (e.g. network) — Firestore already updated, auth email is secondary
+      // If Firebase Auth email update fails for any reason, don't update Firestore either
+      const msg = code === "auth/email-already-in-use"
+        ? "This email is already used by another Firebase account"
+        : "Failed to update email in Firebase. Please try again.";
+      return { success: false, error: msg };
+    }
+
+    // Step 2: Only after Firebase Auth succeeds, update Firestore
+    try {
+      await updateDoc(doc(db, "usernames", currentUser), {
+        recoveryEmail: trimmedEmail,
+        email: trimmedEmail,
+        authEmail: trimmedEmail,
+      });
+    } catch {
+      // Firestore update failed but Firebase Auth is already updated — acceptable
     }
 
     // Update local state
@@ -716,7 +720,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   saveBudgetForMonth: async (monthKey, amount) => {
-    const { uid } = get();
+    const { uid } = useAuthStore.getState();
     if (!db || !uid) return;
     const docRef = doc(db, "users", uid, "settings", "config");
 

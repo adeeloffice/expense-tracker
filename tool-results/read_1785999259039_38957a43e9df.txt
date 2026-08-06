@@ -1,0 +1,750 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import { create } from "zustand";
+     4→     4→import {
+     5→     5→  auth,
+     6→     6→  db,
+     7→     7→  isFirebaseConfigured,
+     8→     8→  usernameToEmail,
+     9→     9→  createUserWithEmailAndPassword,
+    10→    10→  signInWithEmailAndPassword,
+    11→    11→  signOut,
+    12→    12→  onAuthStateChanged,
+    13→    13→  updateProfile,
+    14→    14→  sendPasswordResetEmail,
+    15→    15→  firebaseUpdateEmail,
+    16→    16→  firebaseDeleteUser,
+    17→    17→  reauthenticateWithCredential,
+    18→    18→  EmailAuthProvider,
+    19→    19→  collection,
+    20→    20→  doc,
+    21→    21→  addDoc,
+    22→    22→  updateDoc,
+    23→    23→  deleteDoc,
+    24→    24→  getDoc,
+    25→    25→  onSnapshot,
+    26→    26→  setDoc,
+    27→    27→  getDocs,
+    28→    28→  writeBatch,
+    29→    29→  firebaseDeleteField,
+    30→    30→  query,
+    31→    31→  where,
+    32→    32→} from "@/lib/firebase";
+    33→    33→import type { Unsubscribe } from "firebase/firestore";
+    34→    34→
+    35→    35→// Re-export Firebase config status for page.tsx
+    36→    36→export { isFirebaseConfigured };
+    37→    37→
+    38→    38→// --- Types ---
+    39→    39→export interface Expense {
+    40→    40→  id: string;
+    41→    41→  title: string;
+    42→    42→  amount: number;
+    43→    43→  category: string;
+    44→    44→  date: string;
+    45→    45→  note: string;
+    46→    46→  createdAt: string;
+    47→    47→}
+    48→    48→
+    49→    49→// --- Currency System ---
+    50→    50→export interface Currency {
+    51→    51→  code: string;
+    52→    52→  symbol: string;
+    53→    53→  name: string;
+    54→    54→  decimals: number;
+    55→    55→}
+    56→    56→
+    57→    57→export const CURRENCIES: Currency[] = [
+    58→    58→  { code: "BHD", symbol: "BD", name: "Bahraini Dinar", decimals: 3 },
+    59→    59→  { code: "USD", symbol: "$", name: "US Dollar", decimals: 2 },
+    60→    60→  { code: "EUR", symbol: "\u20AC", name: "Euro", decimals: 2 },
+    61→    61→  { code: "GBP", symbol: "\u00A3", name: "British Pound", decimals: 2 },
+    62→    62→  { code: "SAR", symbol: "SR", name: "Saudi Riyal", decimals: 2 },
+    63→    63→  { code: "AED", symbol: "AED", name: "UAE Dirham", decimals: 2 },
+    64→    64→  { code: "KWD", symbol: "KD", name: "Kuwaiti Dinar", decimals: 3 },
+    65→    65→  { code: "QAR", symbol: "QR", name: "Qatari Riyal", decimals: 2 },
+    66→    66→  { code: "OMR", symbol: "OMR", name: "Omani Rial", decimals: 3 },
+    67→    67→  { code: "INR", symbol: "\u20B9", name: "Indian Rupee", decimals: 2 },
+    68→    68→  { code: "PKR", symbol: "Rs", name: "Pakistani Rupee", decimals: 2 },
+    69→    69→  { code: "BDT", symbol: "\u09F3", name: "Bangladeshi Taka", decimals: 2 },
+    70→    70→  { code: "JPY", symbol: "\u00A5", name: "Japanese Yen", decimals: 0 },
+    71→    71→  { code: "CNY", symbol: "\u00A5", name: "Chinese Yuan", decimals: 2 },
+    72→    72→  { code: "PHP", symbol: "\u20B1", name: "Philippine Peso", decimals: 2 },
+    73→    73→];
+    74→    74→
+    75→    75→export function getCurrency(code: string): Currency {
+    76→    76→  return CURRENCIES.find((c) => c.code === code) || CURRENCIES[0];
+    77→    77→}
+    78→    78→
+    79→    79→export function formatCurrency(amount: number, currencyCode: string): string {
+    80→    80→  const currency = getCurrency(currencyCode);
+    81→    81→  const formatted = amount.toLocaleString("en-US", {
+    82→    82→    minimumFractionDigits: currency.decimals,
+    83→    83→    maximumFractionDigits: currency.decimals,
+    84→    84→  });
+    85→    85→  return `${currency.symbol} ${formatted}`;
+    86→    86→}
+    87→    87→
+    88→    88→export const CATEGORIES = [
+    89→    89→  "Food & Drinks",
+    90→    90→  "Transport",
+    91→    91→  "Shopping",
+    92→    92→  "Bills & Utilities",
+    93→    93→  "Entertainment",
+    94→    94→  "Health",
+    95→    95→  "Education",
+    96→    96→  "Travel",
+    97→    97→  "Groceries",
+    98→    98→  "Other",
+    99→    99→] as const;
+   100→   100→
+   101→   101→export const CATEGORY_ICONS: Record<string, string> = {
+   102→   102→  "Food & Drinks": "UtensilsCrossed",
+   103→   103→  Transport: "Car",
+   104→   104→  Shopping: "ShoppingBag",
+   105→   105→  "Bills & Utilities": "Receipt",
+   106→   106→  Entertainment: "Gamepad2",
+   107→   107→  Health: "Heart",
+   108→   108→  Education: "GraduationCap",
+   109→   109→  Travel: "Plane",
+   110→   110→  Groceries: "ShoppingCart",
+   111→   111→  Other: "MoreHorizontal",
+   112→   112→};
+   113→   113→
+   114→   114→export const CATEGORY_COLORS: Record<string, string> = {
+   115→   115→  "Food & Drinks": "hsl(0, 72%, 56%)",
+   116→   116→  Transport: "hsl(25, 95%, 53%)",
+   117→   117→  Shopping: "hsl(45, 93%, 47%)",
+   118→   118→  "Bills & Utilities": "hsl(142, 71%, 45%)",
+   119→   119→  Entertainment: "hsl(173, 58%, 39%)",
+   120→   120→  Health: "hsl(199, 89%, 48%)",
+   121→   121→  Education: "hsl(262, 83%, 58%)",
+   122→   122→  Travel: "hsl(292, 64%, 51%)",
+   123→   123→  Groceries: "hsl(330, 81%, 52%)",
+   124→   124→  Other: "hsl(215, 20%, 55%)",
+   125→   125→};
+   126→   126→
+   127→   127→// ============================================================
+   128→   128→// AUTH STORE — backed by Firebase Authentication
+   129→   129→// ============================================================
+   130→   130→
+   131→   131→interface AuthState {
+   132→   132→  currentUser: string | null;
+   133→   133→  uid: string | null;
+   134→   134→  userEmail: string | null;
+   135→   135→  isLocked: boolean;
+   136→   136→  isAuthenticated: boolean;
+   137→   137→  isInitializing: boolean;
+   138→   138→  needsEmailUpdate: boolean;
+   139→   139→
+   140→   140→  initAuth: () => () => void;
+   141→   141→  signup: (username: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+   142→   142→  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+   143→   143→  logout: () => Promise<void>;
+   144→   144→  lock: () => void;
+   145→   145→  unlock: (password: string) => Promise<boolean>;
+   146→   146→  deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
+   147→   147→  forgotPassword: (username: string) => Promise<{ success: boolean; error?: string; email?: string }>;
+   148→   148→  updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
+   149→   149→}
+   150→   150→
+   151→   151→export const useAuthStore = create<AuthState>()((set, get) => ({
+   152→   152→  currentUser: null,
+   153→   153→  uid: null,
+   154→   154→  userEmail: null,
+   155→   155→  isLocked: false,
+   156→   156→  isAuthenticated: false,
+   157→   157→  isInitializing: true,
+   158→   158→  needsEmailUpdate: false,
+   159→   159→
+   160→   160→  initAuth: () => {
+   161→   161→    if (!auth) {
+   162→   162→      set({ isInitializing: false });
+   163→   163→      return () => {};
+   164→   164→    }
+   165→   165→
+   166→   166→    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+   167→   167→      if (firebaseUser) {
+   168→   168→        const email = firebaseUser.email || "";
+   169→   169→        const username = firebaseUser.displayName || email.split("@")[0];
+   170→   170→
+   171→   171→        // Load recovery email from Firestore (separate from auth email)
+   172→   172→        let recoveryEmail: string | null = null;
+   173→   173→        if (db) {
+   174→   174→          try {
+   175→   175→            const usernameDoc = await getDoc(doc(db, "usernames", username));
+   176→   176→            if (usernameDoc.exists()) {
+   177→   177→              const data = usernameDoc.data();
+   178→   178→              // Read from recoveryEmail field (new), fall back to email field (old)
+   179→   179→              const stored = data.recoveryEmail || data.email;
+   180→   180→              if (stored && !stored.endsWith("@et.app")) {
+   181→   181→                recoveryEmail = stored;
+   182→   182→              }
+   183→   183→            }
+   184→   184→          } catch { /* ignore */ }
+   185→   185→        }
+   186→   186→
+   187→   187→        set({
+   188→   188→          currentUser: username,
+   189→   189→          uid: firebaseUser.uid,
+   190→   190→          userEmail: recoveryEmail,
+   191→   191→          isAuthenticated: true,
+   192→   192→          isInitializing: false,
+   193→   193→          isLocked: false,
+   194→   194→          needsEmailUpdate: !recoveryEmail,
+   195→   195→        });
+   196→   196→      } else {
+   197→   197→        set({
+   198→   198→          currentUser: null,
+   199→   199→          uid: null,
+   200→   200→          userEmail: null,
+   201→   201→          isAuthenticated: false,
+   202→   202→          isInitializing: false,
+   203→   203→          isLocked: false,
+   204→   204→          needsEmailUpdate: false,
+   205→   205→        });
+   206→   206→      }
+   207→   207→    });
+   208→   208→
+   209→   209→    return () => unsubscribe();
+   210→   210→  },
+   211→   211→
+   212→   212→  signup: async (username, email, password) => {
+   213→   213→    if (!auth || !db) {
+   214→   214→      return { success: false, error: "Firebase is not configured. See .env.local" };
+   215→   215→    }
+   216→   216→    const normalized = username.trim().toLowerCase();
+   217→   217→    const trimmedEmail = email.trim().toLowerCase();
+   218→   218→    if (normalized.length < 2) {
+   219→   219→      return { success: false, error: "Username must be at least 2 characters" };
+   220→   220→    }
+   221→   221→    // Email is optional — validate only if provided
+   222→   222→    if (trimmedEmail && (!trimmedEmail.includes("@") || !trimmedEmail.includes("."))) {
+   223→   223→      return { success: false, error: "Please enter a valid email address" };
+   224→   224→    }
+   225→   225→    if (password.length < 6) {
+   226→   226→      return { success: false, error: "Password must be at least 6 characters" };
+   227→   227→    }
+   228→   228→    try {
+   229→   229→      // Check if username is already taken
+   230→   230→      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
+   231→   231→      if (usernameDoc.exists()) {
+   232→   232→        return { success: false, error: "Username is already taken. Choose a different username." };
+   233→   233→      }
+   234→   234→
+   235→   235→      // Use real email if provided, otherwise fall back to @et.app
+   236→   236→      const fbAuthEmail = trimmedEmail || usernameToEmail(normalized);
+   237→   237→
+   238→   238→      // Try creating the Firebase Auth user FIRST
+   239→   239→      // This handles the case where a user was deleted from Firebase Console
+   240→   240→      // but the usernames doc still exists in Firestore
+   241→   241→      const cred = await createUserWithEmailAndPassword(auth, fbAuthEmail, password);
+   242→   242→      await updateProfile(cred.user, { displayName: normalized });
+   243→   243→
+   244→   244→      // Create default settings in Firestore
+   245→   245→      await setDoc(doc(db, "users", cred.user.uid, "settings", "config"), {
+   246→   246→        currencyCode: "BHD",
+   247→   247→        monthlyBudget: 0,
+   248→   248→      });
+   249→   249→
+   250→   250→      // Create/update username → UID mapping
+   251→   251→      // authEmail = email used in Firebase Auth (for login)
+   252→   252→      // recoveryEmail = email for password reset (optional, NEVER used for login)
+   253→   253→      // Double-check username wasn't taken while we were creating the auth user
+   254→   254→      const recheck = await getDoc(doc(db, "usernames", normalized));
+   255→   255→      if (recheck.exists()) {
+   256→   256→        // Username was taken — clean up the Firebase user we just created
+   257→   257→        await cred.user.delete().catch(() => {});
+   258→   258→        return { success: false, error: "Username is already taken. Choose a different username." };
+   259→   259→      }
+   260→   260→      await setDoc(doc(db, "usernames", normalized), {
+   261→   261→        uid: cred.user.uid,
+   262→   262→        authEmail: fbAuthEmail,
+   263→   263→        recoveryEmail: trimmedEmail || null,
+   264→   264→      });
+   265→   265→
+   266→   266→      set({
+   267→   267→        currentUser: normalized,
+   268→   268→        uid: cred.user.uid,
+   269→   269→        userEmail: trimmedEmail || null,
+   270→   270→        isAuthenticated: true,
+   271→   271→        isLocked: false,
+   272→   272→        needsEmailUpdate: !trimmedEmail,
+   273→   273→      });
+   274→   274→      return { success: true };
+   275→   275→    } catch (err: unknown) {
+   276→   276→      const code = (err as { code?: string })?.code || "";
+   277→   277→      if (code === "auth/email-already-in-use") {
+   278→   278→        return { success: false, error: "This email or username is already registered" };
+   279→   279→      }
+   280→   280→      if (code === "auth/weak-password") {
+   281→   281→        return { success: false, error: "Password is too weak (min 6 chars)" };
+   282→   282→      }
+   283→   283→      if (code === "auth/invalid-email") {
+   284→   284→        return { success: false, error: "Invalid email address" };
+   285→   285→      }
+   286→   286→      return { success: false, error: "Signup failed. Please try again." };
+   287→   287→    }
+   288→   288→  },
+   289→   289→
+   290→   290→  login: async (username, password) => {
+   291→   291→    if (!auth || !db) {
+   292→   292→      return { success: false, error: "Firebase is not configured. See .env.local" };
+   293→   293→    }
+   294→   294→    const normalized = username.trim().toLowerCase();
+   295→   295→    try {
+   296→   296→      // Look up the username doc to check if user exists
+   297→   297→      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
+   298→   298→      if (!usernameDoc.exists()) {
+   299→   299→        return { success: false, error: "User not found. Please sign up first." };
+   300→   300→      }
+   301→   301→
+   302→   302→      // Use authEmail for login (the email used during Firebase Auth signup)
+   303→   303→      // NEVER use recoveryEmail for login — it’s only for password reset
+   304→   304→      const data = usernameDoc.data();
+   305→   305→      let loginEmail = data.authEmail || usernameToEmail(normalized);
+   306→   306→
+   307→   307→      // Auto-migrate old docs: if authEmail field doesn’t exist, set it now
+   308→   308→      if (!data.authEmail) {
+   309→   309→        const correctAuthEmail = usernameToEmail(normalized);
+   310→   310→        updateDoc(doc(db, "usernames", normalized), { authEmail: correctAuthEmail }).catch(() => {});
+   311→   311→        loginEmail = correctAuthEmail;
+   312→   312→      }
+   313→   313→
+   314→   314→      await signInWithEmailAndPassword(auth, loginEmail, password);
+   315→   315→      return { success: true };
+   316→   316→    } catch (err: unknown) {
+   317→   317→      const code = (err as { code?: string })?.code || "";
+   318→   318→      // Username exists (we checked above), so it must be wrong password
+   319→   319→      if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+   320→   320→        return { success: false, error: "Incorrect password" };
+   321→   321→      }
+   322→   322→      if (code === "auth/user-not-found") {
+   323→   323→        // Orphaned Firestore doc — Auth user was deleted (e.g. from Firebase Console)
+   324→   324→        // Clean up ALL remaining Firestore data for this user
+   325→   325→        try {
+   326→   326→          const data = (await getDoc(doc(db, "usernames", normalized))).data();
+   327→   327→          const uid = data?.uid;
+   328→   328→          if (uid) {
+   329→   329→            // Delete all expenses
+   330→   330→            const expensesSnapshot = await getDocs(collection(db, "users", uid, "expenses"));
+   331→   331→            if (!expensesSnapshot.empty) {
+   332→   332→              const batch = writeBatch(db);
+   333→   333→              expensesSnapshot.docs.forEach((d) => batch.delete(d.ref));
+   334→   334→              await batch.commit();
+   335→   335→            }
+   336→   336→            // Delete settings
+   337→   337→            await deleteDoc(doc(db, "users", uid, "settings", "config")).catch(() => {});
+   338→   338→          }
+   339→   339→        } catch { /* best effort cleanup */ }
+   340→   340→        // Finally delete the usernames doc
+   341→   341→        await deleteDoc(doc(db, "usernames", normalized)).catch(() => {});
+   342→   342→        return { success: false, error: "User not found. Please sign up first." };
+   343→   343→      }
+   344→   344→      return { success: false, error: "Login failed. Please try again." };
+   345→   345→    }
+   346→   346→  },
+   347→   347→
+   348→   348→  logout: async () => {
+   349→   349→    if (!auth) return;
+   350→   350→    try {
+   351→   351→      await signOut(auth);
+   352→   352→    } catch {
+   353→   353→      // ignore sign out errors
+   354→   354→    }
+   355→   355→  },
+   356→   356→
+   357→   357→  lock: () => {
+   358→   358→    set({ isLocked: true });
+   359→   359→  },
+   360→   360→
+   361→   361→  unlock: async (password) => {
+   362→   362→    if (!auth || !auth.currentUser) return false;
+   363→   363→    try {
+   364→   364→      // Use the actual email from Firebase Auth (works for both old and new users)
+   365→   365→      const email = auth.currentUser.email!;
+   366→   366→      const credential = EmailAuthProvider.credential(email, password);
+   367→   367→      await reauthenticateWithCredential(auth.currentUser, credential);
+   368→   368→      set({ isLocked: false });
+   369→   369→      return true;
+   370→   370→    } catch {
+   371→   371→      return false;
+   372→   372→    }
+   373→   373→  },
+   374→   374→
+   375→   375→  deleteAccount: async (password) => {
+   376→   376→    if (!auth || !db || !auth.currentUser) {
+   377→   377→      return { success: false, error: "Not authenticated" };
+   378→   378→    }
+   379→   379→    const { uid, currentUser } = get();
+   380→   380→    if (!uid) return { success: false, error: "Not authenticated" };
+   381→   381→    try {
+   382→   382→      // Re-authenticate (use actual email from Firebase Auth)
+   383→   383→      const email = auth.currentUser.email!;
+   384→   384→      const credential = EmailAuthProvider.credential(email, password);
+   385→   385→      await reauthenticateWithCredential(auth.currentUser, credential);
+   386→   386→
+   387→   387→      // Delete all expenses from Firestore
+   388→   388→      const expensesRef = collection(db, "users", uid, "expenses");
+   389→   389→      const snapshot = await getDocs(expensesRef);
+   390→   390→      if (!snapshot.empty) {
+   391→   391→        const batch = writeBatch(db);
+   392→   392→        snapshot.docs.forEach((d) => batch.delete(d.ref));
+   393→   393→        await batch.commit();
+   394→   394→      }
+   395→   395→
+   396→   396→      // Delete settings document
+   397→   397→      try {
+   398→   398→        await deleteDoc(doc(db, "users", uid, "settings", "config"));
+   399→   399→      } catch {
+   400→   400→        // settings doc might not exist
+   401→   401→      }
+   402→   402→
+   403→   403→      // Delete username mapping
+   404→   404→      if (currentUser) {
+   405→   405→        try {
+   406→   406→          await deleteDoc(doc(db, "usernames", currentUser));
+   407→   407→        } catch {
+   408→   408→          // ignore
+   409→   409→        }
+   410→   410→      }
+   411→   411→
+   412→   412→      // Delete the Firebase Auth user
+   413→   413→      await firebaseDeleteUser(auth.currentUser);
+   414→   414→      return { success: true };
+   415→   415→    } catch (err: unknown) {
+   416→   416→      const code = (err as { code?: string })?.code || "";
+   417→   417→      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+   418→   418→        return { success: false, error: "Incorrect password" };
+   419→   419→      }
+   420→   420→      return { success: false, error: "Failed to delete account. Please try again." };
+   421→   421→    }
+   422→   422→  },
+   423→   423→
+   424→   424→  forgotPassword: async (username) => {
+   425→   425→    if (!auth || !db) {
+   426→   426→      return { success: false, error: "Firebase not configured" };
+   427→   427→    }
+   428→   428→    const normalized = username.trim().toLowerCase();
+   429→   429→    try {
+   430→   430→      // Look up the user’s recovery email from Firestore
+   431→   431→      const usernameDoc = await getDoc(doc(db, "usernames", normalized));
+   432→   432→      if (!usernameDoc.exists()) {
+   433→   433→        return { success: false, error: "Username not found" };
+   434→   434→      }
+   435→   435→      const data = usernameDoc.data();
+   436→   436→      // Use recoveryEmail field (new), fall back to email field (old docs)
+   437→   437→      const recoveryEmail = data.recoveryEmail || data.email;
+   438→   438→
+   439→   439→      // Check if the user has a real recovery email
+   440→   440→      if (!recoveryEmail || recoveryEmail.endsWith("@et.app")) {
+   441→   441→        return {
+   442→   442→          success: false,
+   443→   443→          error: "This account was created without a recovery email. Please create a new account with your email to enable password reset.",
+   444→   444→        };
+   445→   445→      }
+   446→   446→
+   447→   447→      // Send Firebase password reset email
+   448→   448→      await sendPasswordResetEmail(auth, recoveryEmail, {
+   449→   449→        url: "https://expense-tracker-five-alpha-69.vercel.app/",
+   450→   450→      });
+   451→   451→      return { success: true, email: recoveryEmail };
+   452→   452→    } catch {
+   453→   453→      return { success: false, error: "Failed to send reset email. Please try again." };
+   454→   454→    }
+   455→   455→  },
+   456→   456→
+   457→   457→  updateUserEmail: async (newEmail, password) => {
+   458→   458→    if (!auth?.currentUser) {
+   459→   459→      return { success: false, error: "Not authenticated" };
+   460→   460→    }
+   461→   461→    const { currentUser } = get();
+   462→   462→    if (!currentUser || !db) {
+   463→   463→      return { success: false, error: "Not authenticated" };
+   464→   464→    }
+   465→   465→    const trimmedEmail = newEmail.trim().toLowerCase();
+   466→   466→    if (!trimmedEmail || !trimmedEmail.includes("@") || !trimmedEmail.includes(".")) {
+   467→   467→      return { success: false, error: "Please enter a valid email address" };
+   468→   468→    }
+   469→   469→    if (!password || password.length < 6) {
+   470→   470→      return { success: false, error: "Please enter your password to confirm" };
+   471→   471→    }
+   472→   472→
+   473→   473→    // Check if this email is already used by another account
+   474→   474→    try {
+   475→   475→      const q = query(
+   476→   476→        collection(db, "usernames"),
+   477→   477→        where("recoveryEmail", "==", trimmedEmail)
+   478→   478→      );
+   479→   479→      const snapshot = await getDocs(q);
+   480→   480→      for (const d of snapshot.docs) {
+   481→   481→        if (d.id !== currentUser) {
+   482→   482→          return { success: false, error: "This email is already used by another account" };
+   483→   483→        }
+   484→   484→      }
+   485→   485→      // Also check old field name for backward compat
+   486→   486→      const q2 = query(
+   487→   487→        collection(db, "usernames"),
+   488→   488→        where("email", "==", trimmedEmail)
+   489→   489→      );
+   490→   490→      const snapshot2 = await getDocs(q2);
+   491→   491→      for (const d of snapshot2.docs) {
+   492→   492→        if (d.id !== currentUser) {
+   493→   493→          // Only flag if this doc doesn't already have recoveryEmail set
+   494→   494→          if (!d.data().recoveryEmail) {
+   495→   495→            return { success: false, error: "This email is already used by another account" };
+   496→   496→          }
+   497→   497→        }
+   498→   498→      }
+   499→   499→    } catch (err) {
+   500→   500→      // If query fails, try fallback: fetch all docs and check manually
+   501→   501→      try {
+   502→   502→        const allDocs = await getDocs(collection(db, "usernames"));
+   503→   503→        for (const d of allDocs.docs) {
+   504→   504→          if (d.id === currentUser) continue;
+   505→   505→          const data = d.data();
+   506→   506→          const em = data.recoveryEmail || data.email;
+   507→   507→          if (em && em.toLowerCase() === trimmedEmail) {
+   508→   508→            return { success: false, error: "This email is already used by another account" };
+   509→   509→          }
+   510→   510→        }
+   511→   511→      } catch {
+   512→   512→        // If even the fallback fails, allow the save (security rules may block reads)
+   513→   513→      }
+   514→   514→    }
+   515→   515→
+   516→   516→    // Save to Firestore: recoveryEmail, old email field, AND authEmail
+   517→   517→    try {
+   518→   518→      await updateDoc(doc(db, "usernames", currentUser), {
+   519→   519→        recoveryEmail: trimmedEmail,
+   520→   520→        email: trimmedEmail,
+   521→   521→        authEmail: trimmedEmail,
+   522→   522→      });
+   523→   523→    } catch {
+   524→   524→      return { success: false, error: "Failed to save email. Please try again." };
+   525→   525→    }
+   526→   526→
+   527→   527→    // Re-authenticate then update Firebase Auth email
+   528→   528→    try {
+   529→   529→      const currentAuthEmail = auth.currentUser!.email!;
+   530→   530→      const credential = EmailAuthProvider.credential(currentAuthEmail, password);
+   531→   531→      await reauthenticateWithCredential(auth.currentUser!, credential);
+   532→   532→      if (auth.currentUser!.email !== trimmedEmail) {
+   533→   533→        await firebaseUpdateEmail(auth.currentUser!, trimmedEmail);
+   534→   534→      }
+   535→   535→    } catch (authErr: unknown) {
+   536→   536→      const code = (authErr as { code?: string })?.code || "";
+   537→   537→      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+   538→   538→        return { success: false, error: "Incorrect password. Please try again." };
+   539→   539→      }
+   540→   540→      // Other auth errors (e.g. network) — Firestore already updated, auth email is secondary
+   541→   541→    }
+   542→   542→
+   543→   543→    // Update local state
+   544→   544→    set({ userEmail: trimmedEmail, needsEmailUpdate: false });
+   545→   545→    return { success: true };
+   546→   546→  },
+   547→   547→}));
+   548→   548→
+   549→   549→// ============================================================
+   550→   550→// EXPENSE STORE — backed by Cloud Firestore
+   551→   551→// ============================================================
+   552→   552→
+   553→   553→interface ExpenseState {
+   554→   554→  expenses: Expense[];
+   555→   555→  isLoading: boolean;
+   556→   556→  _unsubscribe: Unsubscribe | null;
+   557→   557→
+   558→   558→  subscribeToExpenses: (uid: string) => void;
+   559→   559→  unsubscribeFromExpenses: () => void;
+   560→   560→  addExpense: (expense: Omit<Expense, "id" | "createdAt">) => Promise<void>;
+   561→   561→  updateExpense: (id: string, updates: Partial<Expense>) => Promise<void>;
+   562→   562→  deleteExpense: (id: string) => Promise<void>;
+   563→   563→}
+   564→   564→
+   565→   565→export const useExpenseStore = create<ExpenseState>()((set, get) => ({
+   566→   566→  expenses: [],
+   567→   567→  isLoading: false,
+   568→   568→  _unsubscribe: null,
+   569→   569→
+   570→   570→  subscribeToExpenses: (uid: string) => {
+   571→   571→    const prev = get()._unsubscribe;
+   572→   572→    if (prev) prev();
+   573→   573→
+   574→   574→    if (!db) return;
+   575→   575→
+   576→   576→    set({ isLoading: true });
+   577→   577→    const expensesRef = collection(db, "users", uid, "expenses");
+   578→   578→    const unsub = onSnapshot(
+   579→   579→      expensesRef,
+   580→   580→      (snapshot) => {
+   581→   581→        const expenses: Expense[] = snapshot.docs.map((d) => {
+   582→   582→          const data = d.data();
+   583→   583→          return {
+   584→   584→            id: d.id,
+   585→   585→            title: data.title || "",
+   586→   586→            amount: data.amount || 0,
+   587→   587→            category: data.category || "",
+   588→   588→            date: data.date || "",
+   589→   589→            note: data.note || "",
+   590→   590→            createdAt: data.createdAt || "",
+   591→   591→          };
+   592→   592→        });
+   593→   593→        set({ expenses, isLoading: false });
+   594→   594→      },
+   595→   595→      () => {
+   596→   596→        set({ isLoading: false });
+   597→   597→      }
+   598→   598→    );
+   599→   599→
+   600→   600→    set({ _unsubscribe: unsub });
+   601→   601→  },
+   602→   602→
+   603→   603→  unsubscribeFromExpenses: () => {
+   604→   604→    const prev = get()._unsubscribe;
+   605→   605→    if (prev) {
+   606→   606→      prev();
+   607→   607→      set({ _unsubscribe: null, expenses: [] });
+   608→   608→    }
+   609→   609→  },
+   610→   610→
+   611→   611→  addExpense: async (expense) => {
+   612→   612→    const { uid } = useAuthStore.getState();
+   613→   613→    if (!db || !uid) return;
+   614→   614→    const expensesRef = collection(db, "users", uid, "expenses");
+   615→   615→    await addDoc(expensesRef, {
+   616→   616→      ...expense,
+   617→   617→      createdAt: new Date().toISOString(),
+   618→   618→    });
+   619→   619→  },
+   620→   620→
+   621→   621→  updateExpense: async (id, updates) => {
+   622→   622→    const { uid } = useAuthStore.getState();
+   623→   623→    if (!db || !uid) return;
+   624→   624→    const docRef = doc(db, "users", uid, "expenses", id);
+   625→   625→    await updateDoc(docRef, updates);
+   626→   626→  },
+   627→   627→
+   628→   628→  deleteExpense: async (id) => {
+   629→   629→    const { uid } = useAuthStore.getState();
+   630→   630→    if (!db || !uid) return;
+   631→   631→    const docRef = doc(db, "users", uid, "expenses", id);
+   632→   632→    await deleteDoc(docRef);
+   633→   633→  },
+   634→   634→}));
+   635→   635→
+   636→   636→// ============================================================
+   637→   637→// SETTINGS STORE — backed by Cloud Firestore
+   638→   638→// ============================================================
+   639→   639→
+   640→   640→interface SettingsState {
+   641→   641→  currencyCode: string;
+   642→   642→  monthlyBudget: number; // legacy single budget (kept for migration)
+   643→   643→  monthlyBudgets: Record<string, number>; // per-month budgets: "YYYY-MM" -> amount
+   644→   644→  isLoading: boolean;
+   645→   645→  _unsubscribe: Unsubscribe | null;
+   646→   646→
+   647→   647→  subscribeToSettings: (uid: string) => void;
+   648→   648→  unsubscribeFromSettings: () => void;
+   649→   649→  saveSettings: (currencyCode: string) => Promise<void>;
+   650→   650→  saveBudgetForMonth: (monthKey: string, amount: number) => Promise<void>;
+   651→   651→  getBudgetForMonth: (monthKey: string) => number;
+   652→   652→}
+   653→   653→
+   654→   654→export const useSettingsStore = create<SettingsState>()((set, get) => ({
+   655→   655→  currencyCode: "BHD",
+   656→   656→  monthlyBudget: 0,
+   657→   657→  monthlyBudgets: {},
+   658→   658→  isLoading: false,
+   659→   659→  _unsubscribe: null,
+   660→   660→
+   661→   661→  subscribeToSettings: (uid: string) => {
+   662→   662→    const prev = get()._unsubscribe;
+   663→   663→    if (prev) prev();
+   664→   664→
+   665→   665→    if (!db) return;
+   666→   666→
+   667→   667→    set({ isLoading: true });
+   668→   668→    const docRef = doc(db, "users", uid, "settings", "config");
+   669→   669→    const unsub = onSnapshot(
+   670→   670→      docRef,
+   671→   671→      (snapshot) => {
+   672→   672→        if (snapshot.exists()) {
+   673→   673→          const data = snapshot.data();
+   674→   674→          const budgets = data.monthlyBudgets || {};
+   675→   675→          const legacyBudget = data.monthlyBudget || 0;
+   676→   676→
+   677→   677→          // Migrate old single monthlyBudget to current month if no per-month budgets exist
+   678→   678→          if (legacyBudget > 0 && Object.keys(budgets).length === 0) {
+   679→   679→            const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+   680→   680→            budgets[currentMonth] = legacyBudget;
+   681→   681→            // Write migrated data back to Firestore
+   682→   682→            setDoc(docRef, { monthlyBudgets: budgets, monthlyBudget: 0 }, { merge: true }).catch(() => {});
+   683→   683→          }
+   684→   684→
+   685→   685→          set({
+   686→   686→            currencyCode: data.currencyCode || "BHD",
+   687→   687→            monthlyBudget: legacyBudget,
+   688→   688→            monthlyBudgets: budgets,
+   689→   689→            isLoading: false,
+   690→   690→          });
+   691→   691→        } else {
+   692→   692→          set({ isLoading: false });
+   693→   693→        }
+   694→   694→      },
+   695→   695→      () => {
+   696→   696→        set({ isLoading: false });
+   697→   697→      }
+   698→   698→    );
+   699→   699→
+   700→   700→    set({ _unsubscribe: unsub });
+   701→   701→  },
+   702→   702→
+   703→   703→  unsubscribeFromSettings: () => {
+   704→   704→    const prev = get()._unsubscribe;
+   705→   705→    if (prev) {
+   706→   706→      prev();
+   707→   707→      set({ _unsubscribe: null });
+   708→   708→    }
+   709→   709→  },
+   710→   710→
+   711→   711→  saveSettings: async (currencyCode) => {
+   712→   712→    const { uid } = useAuthStore.getState();
+   713→   713→    if (!db || !uid) return;
+   714→   714→    const docRef = doc(db, "users", uid, "settings", "config");
+   715→   715→    await setDoc(docRef, { currencyCode }, { merge: true });
+   716→   716→  },
+   717→   717→
+   718→   718→  saveBudgetForMonth: async (monthKey, amount) => {
+   719→   719→    const { uid } = get();
+   720→   720→    if (!db || !uid) return;
+   721→   721→    const docRef = doc(db, "users", uid, "settings", "config");
+   722→   722→
+   723→   723→    // Optimistic update — update the store immediately so UI reflects instantly
+   724→   724→    const currentBudgets = get().monthlyBudgets;
+   725→   725→    const optimistic = { ...currentBudgets };
+   726→   726→    if (amount > 0) {
+   727→   727→      optimistic[monthKey] = amount;
+   728→   728→    } else {
+   729→   729→      delete optimistic[monthKey];
+   730→   730→    }
+   731→   731→    set({ monthlyBudgets: optimistic });
+   732→   732→
+   733→   733→    // Persist to Firestore using dot notation (only updates the specific month key)
+   734→   734→    try {
+   735→   735→      if (amount > 0) {
+   736→   736→        await updateDoc(docRef, { ["monthlyBudgets." + monthKey]: amount });
+   737→   737→      } else {
+   738→   738→        await updateDoc(docRef, { ["monthlyBudgets." + monthKey]: firebaseDeleteField() });
+   739→   739→      }
+   740→   740→    } catch {
+   741→   741→      // onSnapshot will correct the store if the write fails
+   742→   742→    }
+   743→   743→  },
+   744→   744→
+   745→   745→  getBudgetForMonth: (monthKey) => {
+   746→   746→    const { monthlyBudgets } = get();
+   747→   747→    return monthlyBudgets[monthKey] || 0;
+   748→   748→  },
+   749→   749→}));
+   750→   750→
