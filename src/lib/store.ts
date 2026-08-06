@@ -847,7 +847,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
         try { new Notification("Budget Alert - 85%", { body: msg, icon: "/logo.svg" }); } catch { /* */ }
       }
-      _sendBudgetAlertEmail(monthKey, `Budget Alert - ${percent.toFixed(0)}% Spent`, msg, "warning");
     }
 
     // 100% alert — red/error
@@ -858,7 +857,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
         try { new Notification("Budget Reached - 100%", { body: msg, icon: "/logo.svg" }); } catch { /* */ }
       }
-      _sendBudgetAlertEmail(monthKey, `Budget Reached - 100%`, msg, "danger");
     }
 
     // Exceeds 100% alert — red/error
@@ -870,22 +868,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
         try { new Notification("Budget Exceeded", { body: msg, icon: "/logo.svg" }); } catch { /* */ }
       }
-      _sendBudgetAlertEmail(monthKey, `Budget Exceeded - ${monthLabel}`, msg, "danger");
     }
   },
 }));
-
-// Send budget alert email via API route (fire-and-forget, non-blocking)
-async function _sendBudgetAlertEmail(monthKey: string, subject: string, message: string, level: string) {
-  try {
-    const email = useAuthStore.getState().userEmail;
-    if (!email || typeof window === "undefined") return;
-    await fetch("/api/budget-alert", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to: email, subject, message, level }),
-    });
-  } catch {
-    // Email send failed silently — in-app alert still worked
-  }
-}
