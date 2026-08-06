@@ -42,12 +42,18 @@ export function LoginScreen() {
   const [forgotSuccess, setForgotSuccess] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
 
+  // Email verification pending state (from login attempt)
+  const [pendingVerify, setPendingVerify] = useState<{ email: string } | null>(null);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendSuccess, setResendSuccess] = useState(false);
+
   // Email verification after signup
   const [verifyEmail, setVerifyEmail] = useState("");
 
   const login = useAuthStore((s) => s.login);
   const signup = useAuthStore((s) => s.signup);
   const forgotPassword = useAuthStore((s) => s.forgotPassword);
+  const resendVerification = useAuthStore((s) => s.resendVerification);
 
   const handleSignupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,6 +100,8 @@ export function LoginScreen() {
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setPendingVerify(null);
+    setResendSuccess(false);
     setIsLoading(true);
     try {
       if (!username.trim() || !password.trim()) {
@@ -102,7 +110,12 @@ export function LoginScreen() {
       }
       const result = await login(username.trim(), password);
       if (!result.success) {
-        setError(result.error || "Login failed");
+        if (result.error === 'verify_email' && result.pendingUser) {
+          setPendingVerify({ email: result.pendingUser.email });
+          setResendSuccess(false);
+        } else {
+          setError(result.error || "Login failed");
+        }
       }
     } finally {
       setIsLoading(false);
@@ -138,6 +151,21 @@ export function LoginScreen() {
     setForgotEmail("");
   };
 
+  const handleResendVerification = async () => {
+    if (!pendingVerify || !password) return;
+    setResendLoading(true);
+    setResendSuccess(false);
+    try {
+      const result = await resendVerification(pendingVerify.email, password);
+      if (result.success) {
+        setResendSuccess(true);
+      } else {
+        setError(result.error || "Failed to resend");
+      }
+    } finally {
+      setResendLoading(false);
+    }
+  };
   // Forgot Password Dialog
   const forgotPasswordDialog = (
     <Dialog open={screen === "forgot"} onOpenChange={(open) => { if (!open) resetForgotFlow(); }}>
@@ -364,6 +392,31 @@ export function LoginScreen() {
 
               {error && (
                 <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{error}</p>
+              )}
+
+              {pendingVerify && (
+                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-3 space-y-2">
+                  <p className="text-sm text-amber-800 dark:text-amber-200 font-medium">
+                    Please verify your email first to login.
+                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    A verification link was sent to <span className="font-semibold">{pendingVerify.email}</span>. The link will expire in 1 hour.
+                  </p>
+                  {resendSuccess ? (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                      Verification link resent! Check your inbox.
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleResendVerification}
+                      disabled={resendLoading}
+                      className="text-xs text-amber-700 dark:text-amber-300 font-semibold hover:underline disabled:opacity-50 cursor-pointer"
+                    >
+                      {resendLoading ? "Sending..." : "Didn't receive the email? Resend"}
+                    </button>
+                  )}
+                </div>
               )}
 
               <Button

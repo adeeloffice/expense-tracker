@@ -140,8 +140,9 @@ interface AuthState {
 
   initAuth: () => () => void;
   signup: (username: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (username: string, password: string) => Promise<{ success: boolean; error?: string; pendingUser?: { uid: string; email: string } }>;
   logout: () => Promise<void>;
+  resendVerification: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string; email?: string }>;
   updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string; verificationSent?: boolean }>;
@@ -350,15 +351,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
       // For real emails, check if verified
       if (!cred.user.emailVerified) {
+        // Remember the user for resend functionality
+        const pendingUser = { uid: cred.user.uid, email: cred.user.email! };
         await signOut(auth);
-        // Reload to get fresh auth state before resending
-        await cred.user.reload().catch(() => {});
-        try {
-          await firebaseSendEmailVerification(auth.currentUser!);
-        } catch {
-          // If resend fails (user already signed out), ignore
-        }
-        return { success: false, error: "Please verify your email first. A new verification link has been sent to your email." };
+        return { success: false, error: "verify_email", pendingUser };
       }
 
       return { success: true };
@@ -374,6 +370,22 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       await signOut(auth);
     } catch {
       // ignore sign out errors
+    }
+  },
+
+  resendVerification: async (email, password) => {
+    if (!auth) return { success: false, error: "Firebase is not configured" };
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      if (cred.user.emailVerified) {
+        await signOut(auth);
+        return { success: false, error: "Email is already verified. You can login now." };
+      }
+      await firebaseSendEmailVerification(cred.user);
+      await signOut(auth);
+      return { success: true };
+    } catch {
+      return { success: false, error: "Failed to resend. Please try again." };
     }
   },
 
