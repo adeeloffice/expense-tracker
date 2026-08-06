@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useAuthStore, useExpenseStore, useSettingsStore, isFirebaseConfigured } from "@/lib/store";
 import { LoginScreen } from "@/components/login-screen";
-import { LockScreen } from "@/components/lock-screen";
+
 import { Dashboard } from "@/components/dashboard";
 import { Wallet, CloudOff, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -58,7 +58,6 @@ function FirebaseSetupGuide() {
 
 export default function Home() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const isLocked = useAuthStore((s) => s.isLocked);
   const isInitializing = useAuthStore((s) => s.isInitializing);
   const uid = useAuthStore((s) => s.uid);
   const initAuth = useAuthStore((s) => s.initAuth);
@@ -114,9 +113,6 @@ export default function Home() {
     return <LoginScreen />;
   }
 
-  if (isLocked) {
-    return <LockScreen />;
-  }
 
   return <Dashboard />;
 }

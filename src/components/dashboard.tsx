@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Plus,
-  Lock,
   LogOut,
   Download,
   Moon,
@@ -79,7 +78,6 @@ function isValidMonthKey(key: string): boolean {
 export function Dashboard() {
   const { theme, setTheme } = useTheme();
   const currentUser = useAuthStore((s) => s.currentUser);
-  const lock = useAuthStore((s) => s.lock);
   const logout = useAuthStore((s) => s.logout);
   const expenses = useExpenseStore((s) => s.expenses);
   const deleteExpense = useExpenseStore((s) => s.deleteExpense);
@@ -294,10 +292,6 @@ export function Dashboard() {
                     </p>
                   )}
                 </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={lock} className="cursor-pointer">
-                  <Lock className="w-4 h-4 mr-2" /> Lock
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={exportCSV} className="cursor-pointer">
                   <Download className="w-4 h-4 mr-2" /> Export CSV
                 </DropdownMenuItem>

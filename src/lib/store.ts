@@ -133,7 +133,6 @@ interface AuthState {
   currentUser: string | null;
   uid: string | null;
   userEmail: string | null;
-  isLocked: boolean;
   isAuthenticated: boolean;
   isInitializing: boolean;
   needsEmailUpdate: boolean;
@@ -142,8 +141,6 @@ interface AuthState {
   signup: (username: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  lock: () => void;
-  unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string; email?: string }>;
   updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string; verificationSent?: boolean }>;
@@ -153,7 +150,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   currentUser: null,
   uid: null,
   userEmail: null,
-  isLocked: false,
   isAuthenticated: false,
   isInitializing: true,
   needsEmailUpdate: false,
@@ -205,7 +201,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           userEmail: recoveryEmail,
           isAuthenticated: true,
           isInitializing: false,
-          isLocked: localStorage.getItem('et_locked') === 'true',
           needsEmailUpdate: !recoveryEmail,
         });
       } else {
@@ -215,7 +210,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           userEmail: null,
           isAuthenticated: false,
           isInitializing: false,
-          isLocked: false,
           needsEmailUpdate: false,
         });
       }
@@ -283,7 +277,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         uid: cred.user.uid,
         userEmail: trimmedEmail || null,
         isAuthenticated: true,
-        isLocked: false,
         needsEmailUpdate: !trimmedEmail,
       });
       return { success: true };
@@ -360,31 +353,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   logout: async () => {
     if (!auth) return;
-    localStorage.removeItem('et_locked');
     try {
       await signOut(auth);
     } catch {
       // ignore sign out errors
-    }
-  },
-
-  lock: () => {
-    set({ isLocked: true });
-    localStorage.setItem('et_locked', 'true');
-  },
-
-  unlock: async (password) => {
-    if (!auth || !auth.currentUser) return false;
-    try {
-      // Use the actual email from Firebase Auth (works for both old and new users)
-      const email = auth.currentUser.email!;
-      const credential = EmailAuthProvider.credential(email, password);
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      set({ isLocked: false });
-      localStorage.removeItem('et_locked');
-      return true;
-    } catch {
-      return false;
     }
   },
 
