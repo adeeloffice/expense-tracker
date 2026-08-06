@@ -381,11 +381,21 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         await signOut(auth);
         return { success: false, error: "Email is already verified. You can login now." };
       }
-      await firebaseSendEmailVerification(cred.user);
+      await firebaseSendEmailVerification(cred.user, {
+        url: typeof window !== 'undefined' ? window.location.origin : undefined,
+      });
       await signOut(auth);
       return { success: true };
-    } catch {
-      return { success: false, error: "Failed to resend. Please try again." };
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || "";
+      if (code === "auth/too-many-requests") {
+        return { success: false, error: "Too many attempts. Please wait a moment and try again." };
+      }
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+        return { success: false, error: "Incorrect password." };
+      }
+      console.error("Resend verification error:", err);
+      return { success: false, error: "Failed to resend. Please try again in a moment." };
     }
   },
 
