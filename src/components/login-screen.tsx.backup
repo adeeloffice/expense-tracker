@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState } from "react";
 import { useAuthStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,36 +42,12 @@ export function LoginScreen() {
   const [forgotSuccess, setForgotSuccess] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
 
-  // Email verification pending state (from login attempt)
-  const [pendingVerify, setPendingVerify] = useState<{ email: string } | null>(null);
-  const [resendLoading, setResendLoading] = useState(false);
-  const [resendSuccess, setResendSuccess] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState(0);
-
   // Email verification after signup
   const [verifyEmail, setVerifyEmail] = useState("");
-
-  // Cooldown timer for resend button
-  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => {
-    if (resendCooldown > 0) {
-      cooldownRef.current = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
-    } else if (cooldownRef.current) {
-      clearTimeout(cooldownRef.current);
-    }
-    return () => { if (cooldownRef.current) clearTimeout(cooldownRef.current); };
-  }, [resendCooldown]);
-
-  const startCooldown = useCallback((seconds: number) => {
-    setResendCooldown(seconds);
-    setResendSuccess(false);
-  }, []);
 
   const login = useAuthStore((s) => s.login);
   const signup = useAuthStore((s) => s.signup);
   const forgotPassword = useAuthStore((s) => s.forgotPassword);
-  const resendVerification = useAuthStore((s) => s.resendVerification);
-  const cancelVerifyPending = useAuthStore((s) => s.cancelVerifyPending);
 
   const handleSignupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,26 +94,15 @@ export function LoginScreen() {
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setPendingVerify(null);
-    setResendSuccess(false);
-    setResendCooldown(0);
     setIsLoading(true);
     try {
       if (!username.trim() || !password.trim()) {
         setError("Please fill in all fields");
         return;
       }
-      // Cancel any previous verify-pending session before trying a new login
-      await cancelVerifyPending();
       const result = await login(username.trim(), password);
       if (!result.success) {
-        if (result.error === 'verify_email' && result.pendingUser) {
-          setPendingVerify({ email: result.pendingUser.email });
-          // 60s cooldown — Firebase rate-limits sendEmailVerification to ~1/min.
-          startCooldown(60);
-        } else {
-          setError(result.error || "Login failed");
-        }
+        setError(result.error || "Login failed");
       }
     } finally {
       setIsLoading(false);
@@ -173,38 +138,6 @@ export function LoginScreen() {
     setForgotEmail("");
   };
 
-  const handleResendVerification = async () => {
-    if (!pendingVerify || resendCooldown > 0) return;
-    setResendLoading(true);
-    setResendSuccess(false);
-    setError("");
-    try {
-      // User is kept authenticated in verifyPending state — no sign-in needed
-      const result = await resendVerification();
-      if (result.success) {
-        setResendSuccess(true);
-        startCooldown(60);
-      } else {
-        const errMsg = result.error || "";
-        if (errMsg === "session_expired") {
-          // User was signed out (page refresh) — must sign in again
-          setPendingVerify(null);
-          setError("Session expired. Please sign in again to resend verification.");
-        } else if (errMsg === "rate_limited") {
-          setError("Too many requests. Please wait a few minutes before trying again.");
-          startCooldown(180);
-        } else if (errMsg === "network_error") {
-          setError("Network error. Check your connection and try again.");
-          startCooldown(30);
-        } else {
-          setError(errMsg || "Failed to resend. Please try again later.");
-          startCooldown(120);
-        }
-      }
-    } finally {
-      setResendLoading(false);
-    }
-  };
   // Forgot Password Dialog
   const forgotPasswordDialog = (
     <Dialog open={screen === "forgot"} onOpenChange={(open) => { if (!open) resetForgotFlow(); }}>
@@ -431,38 +364,6 @@ export function LoginScreen() {
 
               {error && (
                 <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{error}</p>
-              )}
-
-              {pendingVerify && (
-                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-3 space-y-2">
-                  <p className="text-sm text-amber-800 dark:text-amber-200 font-medium">
-                    Please verify your email first to login.
-                  </p>
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    A verification link was sent to <span className="font-semibold">{pendingVerify.email}</span> when you signed up. Check your inbox and spam folder.
-                  </p>
-                  <p className="text-xs text-amber-600/70 dark:text-amber-400/70">
-                    Note: Resending invalidates the previous link. Only use the latest link received.
-                  </p>
-                  {resendSuccess ? (
-                    <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                      Verification link resent! Check your inbox.
-                    </p>
-                  ) : resendCooldown > 0 ? (
-                    <p className="text-xs text-muted-foreground">
-                      Resend available in {resendCooldown}s
-                    </p>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleResendVerification}
-                      disabled={resendLoading}
-                      className="text-xs text-amber-700 dark:text-amber-300 font-semibold hover:underline disabled:opacity-50 cursor-pointer"
-                    >
-                      {resendLoading ? "Sending..." : "Didn't receive the email? Resend"}
-                    </button>
-                  )}
-                </div>
               )}
 
               <Button

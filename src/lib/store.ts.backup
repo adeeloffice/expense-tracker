@@ -137,14 +137,11 @@ interface AuthState {
   isAuthenticated: boolean;
   isInitializing: boolean;
   needsEmailUpdate: boolean;
-  verifyPending: boolean; // true = user is signed in but unverified, blocked from dashboard
 
   initAuth: () => () => void;
-  signup: (username: string, email: string, password: string) => Promise<{ success: boolean; error?: string; needsVerification?: boolean }>;
-  login: (username: string, password: string) => Promise<{ success: boolean; error?: string; pendingUser?: { uid: string; email: string } }>;
+  signup: (username: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  resendVerification: () => Promise<{ success: boolean; error?: string }>;
-  cancelVerifyPending: () => Promise<void>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string; email?: string }>;
   updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string; verificationSent?: boolean }>;
@@ -157,7 +154,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   isAuthenticated: false,
   isInitializing: true,
   needsEmailUpdate: false,
-  verifyPending: false,
 
   initAuth: () => {
     if (!auth) {
@@ -169,41 +165,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       if (firebaseUser) {
         const email = firebaseUser.email || "";
         const username = firebaseUser.displayName || email.split("@")[0];
-
-        // If real email (not @et.app) and NOT verified
-        if (!email.endsWith("@et.app") && !firebaseUser.emailVerified) {
-          const { verifyPending } = get();
-          if (verifyPending) {
-            // User is in "verify pending" state — keep signed in (no signOut)
-            // so resendVerification can use auth.currentUser without re-authenticating.
-            // Just mark as not authenticated so dashboard doesn't show.
-            set({
-              currentUser: username,
-              uid: firebaseUser.uid,
-              userEmail: email,
-              isAuthenticated: false,
-              isInitializing: false,
-              needsEmailUpdate: false,
-              verifyPending: true,
-            });
-            return;
-          }
-          // Not in verifyPending state (e.g. page refresh) — sign out
-          await signOut(auth);
-          set({
-            currentUser: null,
-            uid: null,
-            userEmail: null,
-            isAuthenticated: false,
-            isInitializing: false,
-            needsEmailUpdate: false,
-            verifyPending: false,
-          });
-          return;
-        }
-
-        // Email is verified (or @et.app) — normal login flow
-        set({ verifyPending: false });
 
         // Load recovery email from Firestore (separate from auth email)
         let recoveryEmail: string | null = null;
@@ -251,7 +212,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           isAuthenticated: false,
           isInitializing: false,
           needsEmailUpdate: false,
-          verifyPending: false,
         });
       }
     });
@@ -282,16 +242,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         return { success: false, error: "Username is already taken. Choose a different username." };
       }
 
-      // CRITICAL: Set verifyPending BEFORE creating the user.
-      // onAuthStateChanged fires immediately after createUserWithEmailAndPassword.
-      // Without verifyPending=true, the observer signs out the unverified user
-      // mid-signup, causing sendEmailVerification and setDoc to fail.
-      set({ verifyPending: true });
-
       // Use real email for Firebase Auth
       const fbAuthEmail = trimmedEmail;
 
       // Try creating the Firebase Auth user FIRST
+      // This handles the case where a user was deleted from Firebase Console
+      // but the usernames doc still exists in Firestore
       const cred = await createUserWithEmailAndPassword(auth, fbAuthEmail, password);
       await updateProfile(cred.user, { displayName: normalized });
 
@@ -305,10 +261,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       });
 
       // Create/update username → UID mapping
+      // authEmail = email used in Firebase Auth (for login)
+      // recoveryEmail = email for password reset
+      // Double-check username wasn't taken while we were creating the auth user
       const recheck = await getDoc(doc(db, "usernames", normalized));
       if (recheck.exists()) {
+        // Username was taken — clean up the Firebase user we just created
         await cred.user.delete().catch(() => {});
-        set({ verifyPending: false });
         return { success: false, error: "Username is already taken. Choose a different username." };
       }
       await setDoc(doc(db, "usernames", normalized), {
@@ -318,12 +277,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       });
 
       // Sign out the user — they must verify email before logging in
-      set({ verifyPending: false });
       await signOut(auth);
 
       return { success: true, needsVerification: true };
     } catch (err: unknown) {
-      set({ verifyPending: false });
       const code = (err as { code?: string })?.code || "";
       if (code === "auth/email-already-in-use") {
         return { success: false, error: "This email is already registered" };
@@ -334,7 +291,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       if (code === "auth/invalid-email") {
         return { success: false, error: "Invalid email address" };
       }
-      console.error("Signup error:", err);
       return { success: false, error: "Signup failed. Please try again." };
     }
   },
@@ -352,24 +308,21 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       }
 
       const data = usernameDoc.data();
-      let loginEmail = data.authEmail;
+      const loginEmail = data.authEmail;
 
-      // For old users without authEmail, fall back to @et.app
       if (!loginEmail) {
-        loginEmail = usernameToEmail(normalized);
+        return { success: false, error: "Account not found. Please sign up again." };
+      }
+
+      // Auto-migrate old docs: if authEmail field doesn't exist, set it now
+      if (!data.authEmail) {
         updateDoc(doc(db, "usernames", normalized), { authEmail: loginEmail }).catch(() => {});
       }
 
       let cred;
       try {
-        // CRITICAL: Set verifyPending BEFORE signInWithEmailAndPassword.
-        // onAuthStateChanged fires immediately after sign-in. If verifyPending
-        // is still false, the observer signs out the unverified user,
-        // making auth.currentUser null and resend fails with "Session expired".
-        set({ verifyPending: true });
         cred = await signInWithEmailAndPassword(auth, loginEmail, password);
       } catch (err: unknown) {
-        set({ verifyPending: false });
         const code = (err as { code?: string })?.code || "";
         if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
           return { success: false, error: "Incorrect password" };
@@ -377,76 +330,22 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         return { success: false, error: "Login failed. Please try again." };
       }
 
-      // Only check email verification for new users (real email, not @et.app)
-      if (loginEmail.endsWith("@et.app")) {
-        set({ verifyPending: false });
-        return { success: true };
-      }
-
-      // For real emails, check if verified
+      // Check if email is verified
       if (!cred.user.emailVerified) {
-        // verifyPending is already true — onAuthStateChanged will keep user signed in.
-        // Do NOT call sendEmailVerification here — it rate-limits to ~1/min.
-        // User already received a verification email during signup.
-        const pendingUser = { uid: cred.user.uid, email: cred.user.email! };
-        return { success: false, error: "verify_email", pendingUser };
+        await signOut(auth);
+        // Resend verification email
+        await firebaseSendEmailVerification(cred.user).catch(() => {});
+        return { success: false, error: "Please verify your email first. A new verification link has been sent to your email." };
       }
 
-      // User is verified — clear verifyPending and proceed
-      set({ verifyPending: false });
       return { success: true };
     } catch {
-      set({ verifyPending: false });
       return { success: false, error: "Login failed. Please try again." };
     }
   },
 
 
   logout: async () => {
-    set({ verifyPending: false });
-    if (!auth) return;
-    try {
-      await signOut(auth);
-    } catch {
-      // ignore sign out errors
-    }
-  },
-
-  resendVerification: async () => {
-    if (!auth) return { success: false, error: "Firebase is not configured" };
-    try {
-      const user = auth.currentUser;
-      if (!user) {
-        return { success: false, error: "session_expired" };
-      }
-      if (user.emailVerified) {
-        return { success: false, error: "Email is already verified. You can login now." };
-      }
-
-      // Force-refresh the ID token before sending verification email.
-      // If the user has been idle, the token may be stale.
-      await user.getIdToken(true);
-
-      await firebaseSendEmailVerification(user, {
-        url: typeof window !== 'undefined' ? window.location.origin : undefined,
-      });
-      return { success: true };
-    } catch (err: unknown) {
-      const code = (err as { code?: string })?.code || "";
-      const message = (err as { message?: string })?.message || "";
-      console.error("Resend verification error:", { code, message, err });
-      if (code === "auth/too-many-requests") {
-        return { success: false, error: "rate_limited" };
-      }
-      if (code === "auth/network-request-failed") {
-        return { success: false, error: "network_error" };
-      }
-      return { success: false, error: "Failed to resend verification email. Please wait 2-3 minutes and try again." };
-    }
-  },
-
-  cancelVerifyPending: async () => {
-    set({ verifyPending: false });
     if (!auth) return;
     try {
       await signOut(auth);
