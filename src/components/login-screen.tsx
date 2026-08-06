@@ -119,6 +119,7 @@ export function LoginScreen() {
     setError("");
     setPendingVerify(null);
     setResendSuccess(false);
+    setResendCooldown(0);
     setIsLoading(true);
     try {
       if (!username.trim() || !password.trim()) {
@@ -129,8 +130,9 @@ export function LoginScreen() {
       if (!result.success) {
         if (result.error === 'verify_email' && result.pendingUser) {
           setPendingVerify({ email: result.pendingUser.email });
-          // Small cooldown to prevent accidental double-click on resend
-          startCooldown(10);
+          // Must wait 60s — Firebase rate limits sendEmailVerification to ~1 per minute.
+          // The signup already sent one, so we need to wait for that window to clear.
+          startCooldown(60);
         } else {
           setError(result.error || "Login failed");
         }
@@ -181,9 +183,9 @@ export function LoginScreen() {
         startCooldown(120);
       } else {
         setError(result.error || "Failed to resend");
-        // Longer cooldown on rate-limit error
+        // Longer cooldown on rate-limit error — Firebase escalates the window
         if ((result.error || "").includes("Too many") || (result.error || "").includes("wait")) {
-          startCooldown(180);
+          startCooldown(300);
         }
       }
     } finally {
