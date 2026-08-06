@@ -137,12 +137,14 @@ interface AuthState {
   isAuthenticated: boolean;
   isInitializing: boolean;
   needsEmailUpdate: boolean;
+  verifyPending: boolean; // true = user is signed in but unverified, blocked from dashboard
 
   initAuth: () => () => void;
   signup: (username: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string; pendingUser?: { uid: string; email: string } }>;
   logout: () => Promise<void>;
-  resendVerification: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  resendVerification: () => Promise<{ success: boolean; error?: string }>;
+  cancelVerifyPending: () => Promise<void>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string; email?: string }>;
   updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string; verificationSent?: boolean }>;
@@ -155,6 +157,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   isAuthenticated: false,
   isInitializing: true,
   needsEmailUpdate: false,
+  verifyPending: false,
 
   initAuth: () => {
     if (!auth) {
@@ -165,10 +168,27 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         const email = firebaseUser.email || "";
+        const username = firebaseUser.displayName || email.split("@")[0];
 
-        // INSTANT CHECK: If real email (not @et.app) and NOT verified, sign out immediately
-        // No Firestore needed — this runs instantly, no dashboard flash
+        // If real email (not @et.app) and NOT verified
         if (!email.endsWith("@et.app") && !firebaseUser.emailVerified) {
+          const { verifyPending } = get();
+          if (verifyPending) {
+            // User is in "verify pending" state — keep signed in (no signOut)
+            // so resendVerification can use auth.currentUser without re-authenticating.
+            // Just mark as not authenticated so dashboard doesn't show.
+            set({
+              currentUser: username,
+              uid: firebaseUser.uid,
+              userEmail: email,
+              isAuthenticated: false,
+              isInitializing: false,
+              needsEmailUpdate: false,
+              verifyPending: true,
+            });
+            return;
+          }
+          // Not in verifyPending state (e.g. page refresh) — sign out
           await signOut(auth);
           set({
             currentUser: null,
@@ -177,11 +197,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
             isAuthenticated: false,
             isInitializing: false,
             needsEmailUpdate: false,
+            verifyPending: false,
           });
           return;
         }
 
-        const username = firebaseUser.displayName || email.split("@")[0];
+        // Email is verified (or @et.app) — normal login flow
+        set({ verifyPending: false });
 
         // Load recovery email from Firestore (separate from auth email)
         let recoveryEmail: string | null = null;
@@ -229,6 +251,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           isAuthenticated: false,
           isInitializing: false,
           needsEmailUpdate: false,
+          verifyPending: false,
         });
       }
     });
@@ -351,11 +374,23 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
       // For real emails, check if verified
       if (!cred.user.emailVerified) {
-        // Don't send verification here — it was already sent during signup.
-        // Sending here would invalidate the original link AND trigger Firebase rate limits
-        // when the user tries to resend. Just sign out and let the user use Resend if needed.
+        // KEY FIX: Keep user signed in and set verifyPending flag.
+        // This allows resendVerification to use auth.currentUser directly
+        // without signIn/signOut cycles that trigger Firebase rate limits.
+        set({ verifyPending: true });
+
+        // Send verification email while user is still authenticated
+        try {
+          await firebaseSendEmailVerification(cred.user, {
+            url: typeof window !== 'undefined' ? window.location.origin : undefined,
+          });
+        } catch {
+          // If send fails, user can still use resend button
+        }
+
+        // onAuthStateChanged will fire and set isAuthenticated: false
+        // (because verifyPending is true), keeping user on login screen
         const pendingUser = { uid: cred.user.uid, email: cred.user.email! };
-        await signOut(auth);
         return { success: false, error: "verify_email", pendingUser };
       }
 
@@ -367,6 +402,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
 
   logout: async () => {
+    set({ verifyPending: false });
     if (!auth) return;
     try {
       await signOut(auth);
@@ -375,29 +411,37 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
   },
 
-  resendVerification: async (email, password) => {
+  resendVerification: async () => {
     if (!auth) return { success: false, error: "Firebase is not configured" };
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      if (cred.user.emailVerified) {
-        await signOut(auth);
+      const user = auth.currentUser;
+      if (!user) {
+        return { success: false, error: "Session expired. Please try signing in again." };
+      }
+      if (user.emailVerified) {
         return { success: false, error: "Email is already verified. You can login now." };
       }
-      await firebaseSendEmailVerification(cred.user, {
+      await firebaseSendEmailVerification(user, {
         url: typeof window !== 'undefined' ? window.location.origin : undefined,
       });
-      await signOut(auth);
       return { success: true };
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || "";
       if (code === "auth/too-many-requests") {
-        return { success: false, error: "Too many attempts. Please wait a moment and try again." };
-      }
-      if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
-        return { success: false, error: "Incorrect password." };
+        return { success: false, error: "Too many attempts. Please wait a few minutes and try again." };
       }
       console.error("Resend verification error:", err);
-      return { success: false, error: "Failed to resend. Please try again in a moment." };
+      return { success: false, error: "Failed to resend verification email. Try again later." };
+    }
+  },
+
+  cancelVerifyPending: async () => {
+    set({ verifyPending: false });
+    if (!auth) return;
+    try {
+      await signOut(auth);
+    } catch {
+      // ignore
     }
   },
 

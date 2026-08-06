@@ -71,6 +71,7 @@ export function LoginScreen() {
   const signup = useAuthStore((s) => s.signup);
   const forgotPassword = useAuthStore((s) => s.forgotPassword);
   const resendVerification = useAuthStore((s) => s.resendVerification);
+  const cancelVerifyPending = useAuthStore((s) => s.cancelVerifyPending);
 
   const handleSignupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,13 +127,14 @@ export function LoginScreen() {
         setError("Please fill in all fields");
         return;
       }
+      // Cancel any previous verify-pending session before trying a new login
+      await cancelVerifyPending();
       const result = await login(username.trim(), password);
       if (!result.success) {
         if (result.error === 'verify_email' && result.pendingUser) {
           setPendingVerify({ email: result.pendingUser.email });
-          // Must wait 60s — Firebase rate limits sendEmailVerification to ~1 per minute.
-          // The signup already sent one, so we need to wait for that window to clear.
-          startCooldown(60);
+          // Login already sent verification email — short cooldown just to prevent double-click
+          startCooldown(10);
         } else {
           setError(result.error || "Login failed");
         }
@@ -172,20 +174,24 @@ export function LoginScreen() {
   };
 
   const handleResendVerification = async () => {
-    if (!pendingVerify || !password || resendCooldown > 0) return;
+    if (!pendingVerify || resendCooldown > 0) return;
     setResendLoading(true);
     setResendSuccess(false);
     setError("");
     try {
-      const result = await resendVerification(pendingVerify.email, password);
+      // No sign-in needed — user is kept authenticated in verifyPending state
+      const result = await resendVerification();
       if (result.success) {
         setResendSuccess(true);
-        startCooldown(120);
+        startCooldown(60);
       } else {
         setError(result.error || "Failed to resend");
-        // Longer cooldown on rate-limit error — Firebase escalates the window
         if ((result.error || "").includes("Too many") || (result.error || "").includes("wait")) {
-          startCooldown(300);
+          startCooldown(120);
+        }
+        if ((result.error || "").includes("Session expired")) {
+          // User was signed out (page refresh) — clear pending state
+          setPendingVerify(null);
         }
       }
     } finally {
@@ -426,10 +432,10 @@ export function LoginScreen() {
                     Please verify your email first to login.
                   </p>
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    A verification link was sent to <span className="font-semibold">{pendingVerify.email}</span> when you signed up. Check your inbox and spam folder.
+                    A verification link has been sent to <span className="font-semibold">{pendingVerify.email}</span>. Check your inbox and spam folder.
                   </p>
                   <p className="text-xs text-amber-600/70 dark:text-amber-400/70">
-                    Note: Each new resend invalidates the previous link. Only use the latest link received.
+                    Note: Each resend invalidates the previous link. Only use the latest link.
                   </p>
                   {resendSuccess ? (
                     <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
