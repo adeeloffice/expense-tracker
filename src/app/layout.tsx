@@ -17,8 +17,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Expense Tracker - Track Your Spending",
   description: "A simple and beautiful expense tracker to manage your daily spending. Features login protection, dark mode, charts, and CSV export.",
+  manifest: "/manifest.json",
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: "/icon-192.png",
+    apple: "/icon-192.png",
   },
 };
 
@@ -29,6 +31,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <meta name="theme-color" content="#10b981" />
+        <link rel="apple-touch-icon" href="/icon-192.png" />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
