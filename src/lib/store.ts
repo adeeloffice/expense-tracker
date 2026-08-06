@@ -1,7 +1,6 @@
 "use client";
 
 import { create } from "zustand";
-import { toast } from "sonner";
 import {
   auth,
   db,
@@ -577,18 +576,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 }));
 
-// Helper: calculate total spending for a month and trigger budget alert if needed
-function _checkBudgetAlert(monthKey: string) {
-  // Use setTimeout so onSnapshot has time to update the expenses array first
-  setTimeout(() => {
-    const expenses = useExpenseStore.getState().expenses;
-    const totalSpent = expenses
-      .filter((e) => e.date && e.date.slice(0, 7) === monthKey)
-      .reduce((sum, e) => sum + (e.amount || 0), 0);
-    useSettingsStore.getState().triggerBudgetAlert(monthKey, totalSpent);
-  }, 1500);
-}
-
 // ============================================================
 // EXPENSE STORE — backed by Cloud Firestore
 // ============================================================
@@ -659,9 +646,6 @@ export const useExpenseStore = create<ExpenseState>()((set, get) => ({
       ...expense,
       createdAt: new Date().toISOString(),
     });
-    // Check budget alert after adding
-    const monthKey = expense.date.slice(0, 7);
-    _checkBudgetAlert(monthKey);
   },
 
   updateExpense: async (id, updates) => {
@@ -669,12 +653,6 @@ export const useExpenseStore = create<ExpenseState>()((set, get) => ({
     if (!db || !uid) return;
     const docRef = doc(db, "users", uid, "expenses", id);
     await updateDoc(docRef, updates);
-    // Check budget alert after updating (use updated date if provided)
-    const dateStr = updates.date;
-    if (dateStr) {
-      const monthKey = dateStr.slice(0, 7);
-      _checkBudgetAlert(monthKey);
-    }
   },
 
   deleteExpense: async (id) => {
@@ -689,14 +667,10 @@ export const useExpenseStore = create<ExpenseState>()((set, get) => ({
 // SETTINGS STORE — backed by Cloud Firestore
 // ============================================================
 
-// Track which alerts have already fired this session to prevent repeats
-const _firedAlerts: Set<string> = new Set();
-
 interface SettingsState {
   currencyCode: string;
   monthlyBudget: number; // legacy single budget (kept for migration)
   monthlyBudgets: Record<string, number>; // per-month budgets: "YYYY-MM" -> amount
-  budgetNotifications: boolean; // user preference for budget alerts
   isLoading: boolean;
   _unsubscribe: Unsubscribe | null;
 
@@ -705,15 +679,12 @@ interface SettingsState {
   saveSettings: (currencyCode: string) => Promise<void>;
   saveBudgetForMonth: (monthKey: string, amount: number) => Promise<void>;
   getBudgetForMonth: (monthKey: string) => number;
-  saveBudgetNotifications: (enabled: boolean) => Promise<void>;
-  triggerBudgetAlert: (monthKey: string, totalSpent: number) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   currencyCode: "BHD",
   monthlyBudget: 0,
   monthlyBudgets: {},
-  budgetNotifications: false,
   isLoading: false,
   _unsubscribe: null,
 
@@ -745,7 +716,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
             currencyCode: data.currencyCode || "BHD",
             monthlyBudget: legacyBudget,
             monthlyBudgets: budgets,
-            budgetNotifications: data.budgetNotifications === true,
             isLoading: false,
           });
         } else {
@@ -805,69 +775,5 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   getBudgetForMonth: (monthKey) => {
     const { monthlyBudgets } = get();
     return monthlyBudgets[monthKey] || 0;
-  },
-
-  saveBudgetNotifications: async (enabled) => {
-    const { uid } = useAuthStore.getState();
-    if (!db || !uid) return;
-    const docRef = doc(db, "users", uid, "settings", "config");
-    set({ budgetNotifications: enabled });
-    try {
-      await updateDoc(docRef, { budgetNotifications: enabled });
-    } catch {
-      // onSnapshot will correct the store if the write fails
-    }
-    // If user just enabled, request browser notification permission
-    if (enabled && typeof window !== "undefined" && "Notification" in window) {
-      if (Notification.permission === "default") {
-        await Notification.requestPermission();
-      }
-    }
-  },
-
-  triggerBudgetAlert: (monthKey, totalSpent) => {
-    const { budgetNotifications, monthlyBudgets } = get();
-    if (!budgetNotifications) return;
-    const budget = monthlyBudgets[monthKey];
-    if (!budget || budget <= 0) return;
-
-    const percent = (totalSpent / budget) * 100;
-    const currencyCode = get().currencyCode;
-    const currency = getCurrency(currencyCode);
-    const monthLabel = new Date(monthKey + "-01").toLocaleDateString("en-US", {
-      month: "long",
-      year: "numeric",
-    });
-
-    // 85% alert — green/success
-    if (percent >= 85 && percent < 100 && !_firedAlerts.has(monthKey + "-85")) {
-      _firedAlerts.add(monthKey + "-85");
-      const msg = `Budget Alert: You have spent ${percent.toFixed(0)}% (${currency.symbol} ${totalSpent.toFixed(currency.decimals)}) of your ${monthLabel} budget (${currency.symbol} ${budget.toFixed(currency.decimals)}).`;
-      toast.success(msg, { duration: 6000 });
-      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-        try { new Notification("Budget Alert - 85%", { body: msg, icon: "/logo.svg" }); } catch { /* */ }
-      }
-    }
-
-    // 100% alert — red/error
-    if (percent >= 100 && percent < 101 && !_firedAlerts.has(monthKey + "-100")) {
-      _firedAlerts.add(monthKey + "-100");
-      const msg = `Budget Reached: You have spent 100% of your ${monthLabel} budget (${currency.symbol} ${budget.toFixed(currency.decimals)}). Any further spending exceeds your limit!`;
-      toast.error(msg, { duration: 8000 });
-      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-        try { new Notification("Budget Reached - 100%", { body: msg, icon: "/logo.svg" }); } catch { /* */ }
-      }
-    }
-
-    // Exceeds 100% alert — red/error
-    if (percent > 101 && !_firedAlerts.has(monthKey + "-over")) {
-      _firedAlerts.add(monthKey + "-over");
-      const overAmount = totalSpent - budget;
-      const msg = `Budget Exceeded: You are ${currency.symbol} ${overAmount.toFixed(currency.decimals)} over your ${monthLabel} budget! Total spent: ${currency.symbol} ${totalSpent.toFixed(currency.decimals)} out of ${currency.symbol} ${budget.toFixed(currency.decimals)}.`;
-      toast.error(msg, { duration: 8000 });
-      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-        try { new Notification("Budget Exceeded", { body: msg, icon: "/logo.svg" }); } catch { /* */ }
-      }
-    }
   },
 }));
