@@ -26,6 +26,7 @@ import {
   setDoc,
   getDocs,
   writeBatch,
+  firebaseDeleteField,
   query,
   where,
 } from "@/lib/firebase";
@@ -715,16 +716,30 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   saveBudgetForMonth: async (monthKey, amount) => {
-    const { uid, monthlyBudgets } = get();
+    const { uid } = get();
     if (!db || !uid) return;
     const docRef = doc(db, "users", uid, "settings", "config");
-    const updated = { ...monthlyBudgets };
+
+    // Optimistic update — update the store immediately so UI reflects instantly
+    const currentBudgets = get().monthlyBudgets;
+    const optimistic = { ...currentBudgets };
     if (amount > 0) {
-      updated[monthKey] = amount;
+      optimistic[monthKey] = amount;
     } else {
-      delete updated[monthKey];
+      delete optimistic[monthKey];
     }
-    await setDoc(docRef, { monthlyBudgets: updated }, { merge: true });
+    set({ monthlyBudgets: optimistic });
+
+    // Persist to Firestore using dot notation (only updates the specific month key)
+    try {
+      if (amount > 0) {
+        await updateDoc(docRef, { ["monthlyBudgets." + monthKey]: amount });
+      } else {
+        await updateDoc(docRef, { ["monthlyBudgets." + monthKey]: firebaseDeleteField() });
+      }
+    } catch {
+      // onSnapshot will correct the store if the write fails
+    }
   },
 
   getBudgetForMonth: (monthKey) => {

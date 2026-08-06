@@ -31,6 +31,7 @@ import {
   where,
   getDocs,
   writeBatch,
+  deleteField as firebaseDeleteField,
   type Unsubscribe,
 } from "firebase/firestore";
 
@@ -86,5 +87,6 @@ export {
   where,
   getDocs,
   writeBatch,
+  firebaseDeleteField,
 };
 export type { User };
