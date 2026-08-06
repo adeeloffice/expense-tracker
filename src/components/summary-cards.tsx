@@ -18,20 +18,27 @@ interface SummaryCardsProps {
 
 export function SummaryCards({ expenses, selectedMonth }: SummaryCardsProps) {
   const currencyCode = useSettingsStore((s) => s.currencyCode);
-  const getBudgetForMonth = useSettingsStore((s) => s.getBudgetForMonth);
+  // Use monthlyBudgets as a reactive selector so the component re-renders on budget changes
+  const monthlyBudgets = useSettingsStore((s) => s.monthlyBudgets);
 
   const isAllMonths = selectedMonth === "all";
 
-  // Get the budget for the specific selected month
-  const monthlyBudget = (!isAllMonths && selectedMonth) ? getBudgetForMonth(selectedMonth) : 0;
+  // Compute budget reactively from the monthlyBudgets map
+  const budget = useMemo(() => {
+    if (isAllMonths) {
+      // Sum all month budgets for "All Months" view
+      return Object.values(monthlyBudgets).reduce((sum, v) => sum + v, 0);
+    }
+    if (!selectedMonth) return 0;
+    return monthlyBudgets[selectedMonth] || 0;
+  }, [monthlyBudgets, isAllMonths, selectedMonth]);
 
   const stats = useMemo(() => {
     const monthTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
 
-    // Budget only applies when viewing a single month and a budget is set for that month
-    const budgetUsed = (!isAllMonths && monthlyBudget > 0) ? (monthTotal / monthlyBudget) * 100 : 0;
-    const budgetRemaining = (!isAllMonths && monthlyBudget > 0) ? monthlyBudget - monthTotal : 0;
-    const overBudget = (!isAllMonths && monthlyBudget > 0) && monthTotal > monthlyBudget;
+    const budgetUsed = budget > 0 ? (monthTotal / budget) * 100 : 0;
+    const budgetRemaining = budget > 0 ? budget - monthTotal : 0;
+    const overBudget = budget > 0 && monthTotal > budget;
 
     return {
       monthTotal,
@@ -40,67 +47,70 @@ export function SummaryCards({ expenses, selectedMonth }: SummaryCardsProps) {
       budgetRemaining,
       overBudget,
     };
-  }, [expenses, monthlyBudget, isAllMonths]);
+  }, [expenses, budget]);
 
   const fmt = (amount: number) => formatCurrency(amount, currencyCode);
 
+  const budgetLabel = isAllMonths ? "Total Budget (All Months)" : "Monthly Budget";
+  const noBudgetText = isAllMonths
+    ? "No budgets set — tap Settings to set budgets per month"
+    : "No budget set — tap Settings to set one";
+
   return (
     <div className="space-y-4">
-      {/* Budget Progress Card — only show when viewing a single month */}
-      {!isAllMonths && (
-        <Card className={`border-2 ${stats.overBudget ? "border-red-300 dark:border-red-800" : monthlyBudget > 0 ? "border-emerald-200 dark:border-emerald-900" : "border-dashed"} overflow-hidden`}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <div className={"p-2 rounded-lg " + (stats.overBudget ? "bg-red-100 dark:bg-red-950/50" : "bg-emerald-100 dark:bg-emerald-950/50")}>
-                  {stats.overBudget ? (
-                    <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400" />
-                  ) : (
-                    <Target className={`w-4 h-4 ${monthlyBudget > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm font-semibold">Monthly Budget</p>
-                  <p className="text-xs text-muted-foreground">
-                    {monthlyBudget > 0
-                      ? `Limit: ${fmt(monthlyBudget)}`
-                      : "No budget set — tap Settings to set one"}
-                  </p>
-                </div>
+      {/* Budget Progress Card */}
+      <Card className={`border-2 ${stats.overBudget ? "border-red-300 dark:border-red-800" : budget > 0 ? "border-emerald-200 dark:border-emerald-900" : "border-dashed"} overflow-hidden`}
+      >
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className={"p-2 rounded-lg " + (stats.overBudget ? "bg-red-100 dark:bg-red-950/50" : "bg-emerald-100 dark:bg-emerald-950/50")}>
+                {stats.overBudget ? (
+                  <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                ) : (
+                  <Target className={`w-4 h-4 ${budget > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                )}
               </div>
-              {monthlyBudget > 0 && (
-                <div className="text-right">
-                  <p className={`text-lg font-bold tabular-nums ${stats.overBudget ? "text-red-600 dark:text-red-400" : ""}`}>
-                    {fmt(stats.monthTotal)}
-                  </p>
-                  <p className={`text-xs font-medium ${stats.overBudget ? "text-red-500" : "text-emerald-600 dark:text-emerald-400"}`}>
-                    {stats.overBudget
-                      ? `Over by ${fmt(Math.abs(stats.budgetRemaining))}`
-                      : `${fmt(stats.budgetRemaining)} remaining`}
-                  </p>
-                </div>
-              )}
+              <div>
+                <p className="text-sm font-semibold">{budgetLabel}</p>
+                <p className="text-xs text-muted-foreground">
+                  {budget > 0
+                    ? `Limit: ${fmt(budget)}`
+                    : noBudgetText}
+                </p>
+              </div>
             </div>
-            {monthlyBudget > 0 && (
-              <div className="space-y-1.5">
-                <Progress
-                  value={stats.overBudget ? 100 : stats.budgetUsed}
-                  className={`h-3 ${stats.overBudget ? "[&>div]:bg-red-500" : "[&>div]:bg-emerald-500"}`}
-                />
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>{stats.budgetUsed.toFixed(1)}% used</span>
-                  <span>
-                    {stats.overBudget
-                      ? `Exceeded by ${((stats.monthTotal / monthlyBudget) * 100 - 100).toFixed(1)}%`
-                      : `${(100 - stats.budgetUsed).toFixed(1)}% left`}
-                  </span>
-                </div>
+            {budget > 0 && (
+              <div className="text-right">
+                <p className={`text-lg font-bold tabular-nums ${stats.overBudget ? "text-red-600 dark:text-red-400" : ""}`}>
+                  {fmt(stats.monthTotal)}
+                </p>
+                <p className={`text-xs font-medium ${stats.overBudget ? "text-red-500" : "text-emerald-600 dark:text-emerald-400"}`}>
+                  {stats.overBudget
+                    ? `Over by ${fmt(Math.abs(stats.budgetRemaining))}`
+                    : `${fmt(stats.budgetRemaining)} remaining`}
+                </p>
               </div>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </div>
+          {budget > 0 && (
+            <div className="space-y-1.5">
+              <Progress
+                value={stats.overBudget ? 100 : stats.budgetUsed}
+                className={`h-3 ${stats.overBudget ? "[&>div]:bg-red-500" : "[&>div]:bg-emerald-500"}`}
+              />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>{stats.budgetUsed.toFixed(1)}% used</span>
+                <span>
+                  {stats.overBudget
+                    ? `Exceeded by ${((stats.monthTotal / budget) * 100 - 100).toFixed(1)}%`
+                    : `${(100 - stats.budgetUsed).toFixed(1)}% left`}
+                </span>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Summary Cards Grid */}
       <div className="grid grid-cols-2 gap-3">

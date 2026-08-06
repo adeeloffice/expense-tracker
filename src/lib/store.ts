@@ -12,6 +12,7 @@ import {
   onAuthStateChanged,
   updateProfile,
   sendPasswordResetEmail,
+  firebaseUpdateEmail,
   firebaseDeleteUser,
   reauthenticateWithCredential,
   EmailAuthProvider,
@@ -491,16 +492,24 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       }
     }
 
-    // Save recovery email to Firestore
-    // NEVER touch authEmail — that’s used for login
-    // Also update old "email" field so Firebase Console shows the new value
+    // Save to Firestore: recoveryEmail, old email field, AND authEmail
     try {
       await updateDoc(doc(db, "usernames", currentUser), {
         recoveryEmail: trimmedEmail,
         email: trimmedEmail,
+        authEmail: trimmedEmail,
       });
     } catch {
       return { success: false, error: "Failed to save email. Please try again." };
+    }
+
+    // Also update the Firebase Auth user email so it shows in Authentication console
+    try {
+      if (auth?.currentUser && auth.currentUser.email !== trimmedEmail) {
+        await firebaseUpdateEmail(auth.currentUser, trimmedEmail);
+      }
+    } catch {
+      // Auth email update may fail if session is stale — Firestore update already succeeded
     }
 
     // Update local state

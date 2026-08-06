@@ -13,6 +13,7 @@ import {
   reauthenticateWithCredential,
   EmailAuthProvider,
   sendPasswordResetEmail,
+  updateEmail as firebaseUpdateEmail,
   type User,
 } from "firebase/auth";
 import {
@@ -69,6 +70,7 @@ export {
   onAuthStateChanged,
   updateProfile,
   sendPasswordResetEmail,
+  firebaseUpdateEmail,
   firebaseDeleteUser,
   reauthenticateWithCredential,
   EmailAuthProvider,

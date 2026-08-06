@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSettingsStore, useAuthStore, CURRENCIES, getCurrency, formatCurrency } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Settings, Coins, Target, Mail, CheckCircle2, ShieldOff } from "lucide-react";
+import { Settings, Coins, Target, Mail, CheckCircle2, ShieldOff, Info } from "lucide-react";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -40,9 +40,9 @@ function formatMonthLabel(key: string): string {
 
 export function SettingsDialog({ open, onOpenChange, selectedMonth }: SettingsDialogProps) {
   const currencyCode = useSettingsStore((s) => s.currencyCode);
+  const monthlyBudgets = useSettingsStore((s) => s.monthlyBudgets);
   const saveSettings = useSettingsStore((s) => s.saveSettings);
   const saveBudgetForMonth = useSettingsStore((s) => s.saveBudgetForMonth);
-  const getBudgetForMonth = useSettingsStore((s) => s.getBudgetForMonth);
   const userEmail = useAuthStore((s) => s.userEmail);
 
   const [budgetInput, setBudgetInput] = useState("");
@@ -50,28 +50,40 @@ export function SettingsDialog({ open, onOpenChange, selectedMonth }: SettingsDi
   const [initialized, setInitialized] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Re-initialize when selectedMonth changes while dialog is open
-  useEffect(() => {
-    if (open && initialized) {
-      const budget = selectedMonth && selectedMonth !== "all" ? getBudgetForMonth(selectedMonth) : 0;
-      setBudgetInput(budget > 0 ? budget.toString() : "");
-    }
-  }, [selectedMonth, open, initialized, getBudgetForMonth]);
+  const isAllMonths = selectedMonth === "all";
+  const monthLabel = !isAllMonths && selectedMonth ? formatMonthLabel(selectedMonth) : "";
 
-  // Initialize on first open
-  if (open && !initialized) {
-    setInitialized(true);
-    setSelectedCurrency(currencyCode);
-    const budget = selectedMonth && selectedMonth !== "all" ? getBudgetForMonth(selectedMonth) : 0;
-    setBudgetInput(budget > 0 ? budget.toString() : "");
-  }
-  if (!open && initialized) {
-    setInitialized(false);
-  }
+  // Reactively get budget for the selected month
+  const currentMonthBudget = useMemo(() => {
+    if (isAllMonths || !selectedMonth) return 0;
+    return monthlyBudgets[selectedMonth] || 0;
+  }, [monthlyBudgets, isAllMonths, selectedMonth]);
+
+  // Total budget across all months
+  const totalBudget = useMemo(() => {
+    return Object.values(monthlyBudgets).reduce((sum, v) => sum + v, 0);
+  }, [monthlyBudgets]);
+
+  const budgetCount = Object.keys(monthlyBudgets).length;
+
+  // Sync budget input when month changes or dialog opens
+  useEffect(() => {
+    if (open) {
+      setBudgetInput(currentMonthBudget > 0 ? currentMonthBudget.toString() : "");
+      setSelectedCurrency(currencyCode);
+    }
+  }, [open, currentMonthBudget, currencyCode]);
+
+  // Track initialization
+  useEffect(() => {
+    if (open) {
+      setInitialized(true);
+    } else {
+      setInitialized(false);
+    }
+  }, [open]);
 
   const currency = getCurrency(selectedCurrency);
-
-  const monthLabel = selectedMonth && selectedMonth !== "all" ? formatMonthLabel(selectedMonth) : "";
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -79,7 +91,7 @@ export function SettingsDialog({ open, onOpenChange, selectedMonth }: SettingsDi
       await saveSettings(selectedCurrency);
 
       // Save budget for the specific month
-      if (selectedMonth && selectedMonth !== "all") {
+      if (!isAllMonths && selectedMonth) {
         const budget = parseFloat(budgetInput);
         const finalBudget = isNaN(budget) || budget <= 0 ? 0 : parseFloat(budget.toFixed(currency.decimals));
         await saveBudgetForMonth(selectedMonth, finalBudget);
@@ -170,46 +182,67 @@ export function SettingsDialog({ open, onOpenChange, selectedMonth }: SettingsDi
             </p>
           </div>
 
-          {/* Budget Limit — per month */}
-          {monthLabel && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Target className="w-4 h-4 text-emerald-500" />
-                <Label className="font-semibold">Budget for {monthLabel}</Label>
-              </div>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-medium">
-                    {currency.symbol}
-                  </span>
-                  <Input
-                    type="number"
-                    step={currency.decimals === 0 ? "1" : currency.decimals === 3 ? "0.001" : "0.01"}
-                    min="0"
-                    placeholder={currency.decimals === 0 ? "0" : currency.decimals === 3 ? "0.000" : "0.00"}
-                    value={budgetInput}
-                    onChange={(e) => setBudgetInput(e.target.value)}
-                    className="h-11 pl-10"
-                  />
-                </div>
-                {budgetInput && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-11 px-3 cursor-pointer"
-                    onClick={handleClearBudget}
-                  >
-                    Clear
-                  </Button>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {budgetInput && parseFloat(budgetInput) > 0
-                  ? `Budget set to ${formatCurrency(parseFloat(budgetInput), selectedCurrency)} for ${monthLabel}`
-                  : `No budget set for ${monthLabel}`}
-              </p>
+          {/* Budget Section */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Target className="w-4 h-4 text-emerald-500" />
+              <Label className="font-semibold">
+                {isAllMonths ? "Budget Overview" : `Budget for ${monthLabel}`}
+              </Label>
             </div>
-          )}
+            {isAllMonths ? (
+              <div className="bg-muted/50 border rounded-lg px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <Info className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium">
+                      {budgetCount > 0
+                        ? `${budgetCount} month${budgetCount !== 1 ? "s" : ""} with budgets set
+                                                       Total: ${formatCurrency(totalBudget, selectedCurrency)}`
+                        : "No budgets set for any month"}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Select a specific month to set or change its budget.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-medium">
+                      {currency.symbol}
+                    </span>
+                    <Input
+                      type="number"
+                      step={currency.decimals === 0 ? "1" : currency.decimals === 3 ? "0.001" : "0.01"}
+                      min="0"
+                      placeholder={currency.decimals === 0 ? "0" : currency.decimals === 3 ? "0.000" : "0.00"}
+                      value={budgetInput}
+                      onChange={(e) => setBudgetInput(e.target.value)}
+                      className="h-11 pl-10"
+                    />
+                  </div>
+                  {budgetInput && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 px-3 cursor-pointer"
+                      onClick={handleClearBudget}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {budgetInput && parseFloat(budgetInput) > 0
+                    ? `Budget set to ${formatCurrency(parseFloat(budgetInput), selectedCurrency)} for ${monthLabel}`
+                    : `No budget set for ${monthLabel}`}
+                </p>
+              </>
+            )}
+          </div>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
