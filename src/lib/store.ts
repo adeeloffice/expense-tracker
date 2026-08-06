@@ -12,6 +12,7 @@ import {
   onAuthStateChanged,
   updateProfile,
   sendPasswordResetEmail,
+  firebaseSendEmailVerification,
   firebaseUpdateEmail,
   firebaseVerifyBeforeUpdateEmail,
   firebaseDeleteUser,
@@ -227,9 +228,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     if (normalized.length < 2) {
       return { success: false, error: "Username must be at least 2 characters" };
     }
-    // Email is optional — validate only if provided
-    if (trimmedEmail && (!trimmedEmail.includes("@") || !trimmedEmail.includes("."))) {
-      return { success: false, error: "Please enter a valid email address" };
+    // Email is now mandatory
+    if (!trimmedEmail || !trimmedEmail.includes("@") || !trimmedEmail.includes(".")) {
+      return { success: false, error: "A valid email address is required" };
     }
     if (password.length < 6) {
       return { success: false, error: "Password must be at least 6 characters" };
@@ -241,14 +242,17 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         return { success: false, error: "Username is already taken. Choose a different username." };
       }
 
-      // Use real email if provided, otherwise fall back to @et.app
-      const fbAuthEmail = trimmedEmail || usernameToEmail(normalized);
+      // Use real email for Firebase Auth
+      const fbAuthEmail = trimmedEmail;
 
       // Try creating the Firebase Auth user FIRST
       // This handles the case where a user was deleted from Firebase Console
       // but the usernames doc still exists in Firestore
       const cred = await createUserWithEmailAndPassword(auth, fbAuthEmail, password);
       await updateProfile(cred.user, { displayName: normalized });
+
+      // Send email verification link
+      await firebaseSendEmailVerification(cred.user);
 
       // Create default settings in Firestore
       await setDoc(doc(db, "users", cred.user.uid, "settings", "config"), {
@@ -258,7 +262,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
       // Create/update username → UID mapping
       // authEmail = email used in Firebase Auth (for login)
-      // recoveryEmail = email for password reset (optional, NEVER used for login)
+      // recoveryEmail = email for password reset
       // Double-check username wasn't taken while we were creating the auth user
       const recheck = await getDoc(doc(db, "usernames", normalized));
       if (recheck.exists()) {
@@ -269,21 +273,17 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       await setDoc(doc(db, "usernames", normalized), {
         uid: cred.user.uid,
         authEmail: fbAuthEmail,
-        recoveryEmail: trimmedEmail || null,
+        recoveryEmail: trimmedEmail,
       });
 
-      set({
-        currentUser: normalized,
-        uid: cred.user.uid,
-        userEmail: trimmedEmail || null,
-        isAuthenticated: true,
-        needsEmailUpdate: !trimmedEmail,
-      });
-      return { success: true };
+      // Sign out the user — they must verify email before logging in
+      await signOut(auth);
+
+      return { success: true, needsVerification: true };
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || "";
       if (code === "auth/email-already-in-use") {
-        return { success: false, error: "This email or username is already registered" };
+        return { success: false, error: "This email is already registered" };
       }
       if (code === "auth/weak-password") {
         return { success: false, error: "Password is too weak (min 6 chars)" };
@@ -308,43 +308,44 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       }
 
       const data = usernameDoc.data();
-      const fallbackEmail = usernameToEmail(normalized);
-      const loginEmail = data.authEmail || fallbackEmail;
+      let loginEmail = data.authEmail;
 
-      // Auto-migrate old docs: if authEmail field doesn't exist, set it now
-      if (!data.authEmail) {
-        updateDoc(doc(db, "usernames", normalized), { authEmail: fallbackEmail }).catch(() => {});
+      // For old users without authEmail, fall back to @et.app
+      if (!loginEmail) {
+        loginEmail = usernameToEmail(normalized);
+        updateDoc(doc(db, "usernames", normalized), { authEmail: loginEmail }).catch(() => {});
       }
 
-      // If authEmail is not the @et.app email, try it first.
-      // If it fails, fall back to @et.app (Firebase Auth might still have the old email
-      // if the user hasn't clicked the verification link yet).
-      // NOTE: Firebase email enumeration protection returns auth/invalid-credential
-      // for BOTH "wrong password" and "user not found", so we must try both.
-      if (loginEmail !== fallbackEmail) {
-        try {
-          await signInWithEmailAndPassword(auth, loginEmail, password);
-          return { success: true };
-        } catch {
-          // authEmail did not work - fall through to try @et.app email
-        }
-      }
-
-      // Try @et.app email (original signup email or fallback)
+      let cred;
       try {
-        await signInWithEmailAndPassword(auth, fallbackEmail, password);
-        // If authEmail in Firestore was different, sync it to the working email
-        if (loginEmail !== fallbackEmail) {
-          updateDoc(doc(db, "usernames", normalized), { authEmail: fallbackEmail }).catch(() => {});
-        }
-        return { success: true };
-      } catch (err2: unknown) {
-        const code = (err2 as { code?: string })?.code || "";
+        cred = await signInWithEmailAndPassword(auth, loginEmail, password);
+      } catch (err: unknown) {
+        const code = (err as { code?: string })?.code || "";
         if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
           return { success: false, error: "Incorrect password" };
         }
         return { success: false, error: "Login failed. Please try again." };
       }
+
+      // Only check email verification for new users (real email, not @et.app)
+      if (loginEmail.endsWith("@et.app")) {
+        return { success: true };
+      }
+
+      // For real emails, check if verified
+      if (!cred.user.emailVerified) {
+        await signOut(auth);
+        // Reload to get fresh auth state before resending
+        await cred.user.reload().catch(() => {});
+        try {
+          await firebaseSendEmailVerification(auth.currentUser!);
+        } catch {
+          // If resend fails (user already signed out), ignore
+        }
+        return { success: false, error: "Please verify your email first. A new verification link has been sent to your email." };
+      }
+
+      return { success: true };
     } catch {
       return { success: false, error: "Login failed. Please try again." };
     }

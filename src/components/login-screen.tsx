@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Wallet, Eye, EyeOff, LogIn, UserPlus, KeyRound, Mail, ArrowLeft } from "lucide-react";
 
-type Screen = "login" | "forgot";
+type Screen = "login" | "forgot" | "verify";
 
 export function LoginScreen() {
   const [screen, setScreen] = useState<Screen>("login");
@@ -42,6 +42,9 @@ export function LoginScreen() {
   const [forgotSuccess, setForgotSuccess] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
 
+  // Email verification after signup
+  const [verifyEmail, setVerifyEmail] = useState("");
+
   const login = useAuthStore((s) => s.login);
   const signup = useAuthStore((s) => s.signup);
   const forgotPassword = useAuthStore((s) => s.forgotPassword);
@@ -59,8 +62,8 @@ export function LoginScreen() {
         setError("Username must be at least 2 characters");
         return;
       }
-      if (email.trim() && (!email.trim().includes("@") || !email.trim().includes("."))) {
-        setError("Please enter a valid email address");
+      if (!email.trim() || !email.trim().includes("@") || !email.trim().includes(".")) {
+        setError("A valid email address is required");
         return;
       }
       if (password.length < 6) {
@@ -74,6 +77,14 @@ export function LoginScreen() {
       const result = await signup(username.trim(), email.trim(), password);
       if (!result.success) {
         setError(result.error || "Signup failed");
+      } else if ((result as { needsVerification?: boolean }).needsVerification) {
+        setVerifyEmail(email.trim());
+        setScreen("verify");
+        setIsSignUp(false);
+        setUsername("");
+        setEmail("");
+        setPassword("");
+        setConfirmPassword("");
       }
     } finally {
       setIsLoading(false);
@@ -227,7 +238,7 @@ export function LoginScreen() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="signup-email">Email Address <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                <Label htmlFor="signup-email">Email Address</Label>
                 <div className="relative">
                   <Input
                     id="signup-email"
@@ -237,10 +248,11 @@ export function LoginScreen() {
                     onChange={(e) => setEmail(e.target.value)}
                     autoComplete="off"
                     className="h-11"
+                    required
                   />
                   <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 </div>
-                <p className="text-xs text-muted-foreground">Add email to enable password reset if you forget your password</p>
+                <p className="text-xs text-muted-foreground">A verification link will be sent to this email</p>
               </div>
 
               <div className="space-y-2">
@@ -400,6 +412,32 @@ export function LoginScreen() {
       </Card>
 
       {forgotPasswordDialog}
+
+      {/* Email Verification Dialog */}
+      <Dialog open={screen === "verify"} onOpenChange={(open) => { if (!open) { setScreen("login"); setVerifyEmail(""); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-600">
+              <Mail className="w-5 h-5" /> Check Your Email!
+            </DialogTitle>
+            <DialogDescription className="space-y-2">
+              <p>Your account has been created successfully.</p>
+              <p>A <span className="font-semibold">verification link</span> has been sent to:</p>
+              <p className="font-semibold text-foreground">{verifyEmail}</p>
+              <p className="text-xs">Click the link in the email to verify your account. After verification, you can sign in with your username and password.</p>
+              <p className="text-xs">Check your inbox and spam/junk folder if you don&apos;t see it.</p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={() => { setScreen("login"); setVerifyEmail(""); }}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
+            >
+              Back to Sign In
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

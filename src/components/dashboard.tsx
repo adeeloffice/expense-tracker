@@ -295,9 +295,11 @@ export function Dashboard() {
                 <DropdownMenuItem onClick={exportCSV} className="cursor-pointer">
                   <Download className="w-4 h-4 mr-2" /> Export CSV
                 </DropdownMenuItem>
+                {userEmail && (
                 <DropdownMenuItem onClick={openEmailDialog} className="cursor-pointer">
-                  <Mail className="w-4 h-4 mr-2" /> {userEmail ? "Change Recovery Email" : "Add Recovery Email"}
+                  <Mail className="w-4 h-4 mr-2" /> Change Recovery Email
                 </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => setDeleteAccountOpen(true)}
