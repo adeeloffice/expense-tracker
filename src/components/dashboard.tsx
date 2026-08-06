@@ -99,11 +99,13 @@ export function Dashboard() {
   const updateUserEmail = useAuthStore((s) => s.updateUserEmail);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [migrationEmail, setMigrationEmail] = useState("");
+  const [migrationPassword, setMigrationPassword] = useState("");
   const [migrationError, setMigrationError] = useState("");
   const [migrationLoading, setMigrationLoading] = useState(false);
 
   const openEmailDialog = () => {
     setMigrationEmail(userEmail || "");
+    setMigrationPassword("");
     setMigrationError("");
     setEmailDialogOpen(true);
   };
@@ -116,7 +118,11 @@ export function Dashboard() {
         setMigrationError("Please enter a valid email address");
         return;
       }
-      const result = await updateUserEmail(migrationEmail.trim());
+      if (!migrationPassword) {
+        setMigrationError("Please enter your password to confirm");
+        return;
+      }
+      const result = await updateUserEmail(migrationEmail.trim(), migrationPassword);
       if (!result.success) {
         setMigrationError(result.error || "Failed to save email");
         return;
@@ -446,6 +452,18 @@ export function Dashboard() {
                 className="h-11"
                 autoFocus
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="migration-password">Password</Label>
+              <Input
+                id="migration-password"
+                type="password"
+                placeholder="Enter your password"
+                value={migrationPassword}
+                onChange={(e) => { setMigrationPassword(e.target.value); setMigrationError(""); }}
+                className="h-11"
+              />
+              <p className="text-xs text-muted-foreground">Required to update your email in Firebase</p>
             </div>
             {migrationError && (
               <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{migrationError}</p>

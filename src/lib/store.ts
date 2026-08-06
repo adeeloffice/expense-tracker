@@ -144,7 +144,7 @@ interface AuthState {
   unlock: (password: string) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string; email?: string }>;
-  updateUserEmail: (newEmail: string) => Promise<{ success: boolean; error?: string }>;
+  updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -319,7 +319,24 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         return { success: false, error: "Incorrect password" };
       }
       if (code === "auth/user-not-found") {
-        // Orphaned Firestore doc — clean up
+        // Orphaned Firestore doc — Auth user was deleted (e.g. from Firebase Console)
+        // Clean up ALL remaining Firestore data for this user
+        try {
+          const data = (await getDoc(doc(db, "usernames", normalized))).data();
+          const uid = data?.uid;
+          if (uid) {
+            // Delete all expenses
+            const expensesSnapshot = await getDocs(collection(db, "users", uid, "expenses"));
+            if (!expensesSnapshot.empty) {
+              const batch = writeBatch(db);
+              expensesSnapshot.docs.forEach((d) => batch.delete(d.ref));
+              await batch.commit();
+            }
+            // Delete settings
+            await deleteDoc(doc(db, "users", uid, "settings", "config")).catch(() => {});
+          }
+        } catch { /* best effort cleanup */ }
+        // Finally delete the usernames doc
         await deleteDoc(doc(db, "usernames", normalized)).catch(() => {});
         return { success: false, error: "User not found. Please sign up first." };
       }
@@ -436,7 +453,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
   },
 
-  updateUserEmail: async (newEmail) => {
+  updateUserEmail: async (newEmail, password) => {
     if (!auth?.currentUser) {
       return { success: false, error: "Not authenticated" };
     }
@@ -447,6 +464,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const trimmedEmail = newEmail.trim().toLowerCase();
     if (!trimmedEmail || !trimmedEmail.includes("@") || !trimmedEmail.includes(".")) {
       return { success: false, error: "Please enter a valid email address" };
+    }
+    if (!password || password.length < 6) {
+      return { success: false, error: "Please enter your password to confirm" };
     }
 
     // Check if this email is already used by another account
@@ -503,13 +523,20 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return { success: false, error: "Failed to save email. Please try again." };
     }
 
-    // Also update the Firebase Auth user email so it shows in Authentication console
+    // Re-authenticate then update Firebase Auth email
     try {
-      if (auth?.currentUser && auth.currentUser.email !== trimmedEmail) {
-        await firebaseUpdateEmail(auth.currentUser, trimmedEmail);
+      const currentAuthEmail = auth.currentUser!.email!;
+      const credential = EmailAuthProvider.credential(currentAuthEmail, password);
+      await reauthenticateWithCredential(auth.currentUser!, credential);
+      if (auth.currentUser!.email !== trimmedEmail) {
+        await firebaseUpdateEmail(auth.currentUser!, trimmedEmail);
       }
-    } catch {
-      // Auth email update may fail if session is stale — Firestore update already succeeded
+    } catch (authErr: unknown) {
+      const code = (authErr as { code?: string })?.code || "";
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+        return { success: false, error: "Incorrect password. Please try again." };
+      }
+      // Other auth errors (e.g. network) — Firestore already updated, auth email is secondary
     }
 
     // Update local state
