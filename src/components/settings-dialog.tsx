@@ -225,8 +225,8 @@ export function SettingsDialog({ open, onOpenChange, selectedMonth }: SettingsDi
             </div>
             <p className="text-xs text-muted-foreground">
               {budgetNotifications
-                ? "You will be alerted at 85%, 100%, and when exceeding your monthly budget."
-                : "Enable to receive alerts when spending reaches 85%, 100%, or exceeds your budget."}
+                ? "Get alerted via in-app toast + email at 85%, 100%, and when exceeding your monthly budget."
+                : "Enable to receive email and in-app alerts when spending reaches 85%, 100%, or exceeds your budget."}
             </p>
             {budgetNotifications && browserPerm === "denied" && (
               <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">

@@ -839,41 +839,53 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       year: "numeric",
     });
 
-    // 85% alert
+    // 85% alert — green/success
     if (percent >= 85 && percent < 100 && !_firedAlerts.has(monthKey + "-85")) {
       _firedAlerts.add(monthKey + "-85");
       const msg = `Budget Alert: You have spent ${percent.toFixed(0)}% (${currency.symbol} ${totalSpent.toFixed(currency.decimals)}) of your ${monthLabel} budget (${currency.symbol} ${budget.toFixed(currency.decimals)}).`;
-      toast.warning(msg, { duration: 6000 });
+      toast.success(msg, { duration: 6000 });
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-        try {
-          new Notification("Budget Alert - 85%", { body: msg, icon: "/logo.svg" });
-        } catch { /* notification not supported */ }
+        try { new Notification("Budget Alert - 85%", { body: msg, icon: "/logo.svg" }); } catch { /* */ }
       }
+      _sendBudgetAlertEmail(monthKey, `Budget Alert - ${percent.toFixed(0)}% Spent`, msg, "warning");
     }
 
-    // 100% alert
+    // 100% alert — red/error
     if (percent >= 100 && percent < 101 && !_firedAlerts.has(monthKey + "-100")) {
       _firedAlerts.add(monthKey + "-100");
-      const msg = `Budget Reached: You have spent 100% of your ${monthLabel} budget. Any further spending exceeds your limit!`;
+      const msg = `Budget Reached: You have spent 100% of your ${monthLabel} budget (${currency.symbol} ${budget.toFixed(currency.decimals)}). Any further spending exceeds your limit!`;
       toast.error(msg, { duration: 8000 });
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-        try {
-          new Notification("Budget Reached - 100%", { body: msg, icon: "/logo.svg" });
-        } catch { /* notification not supported */ }
+        try { new Notification("Budget Reached - 100%", { body: msg, icon: "/logo.svg" }); } catch { /* */ }
       }
+      _sendBudgetAlertEmail(monthKey, `Budget Reached - 100%`, msg, "danger");
     }
 
-    // Exceeds 100% alert (for expenses added after already hitting 100%)
+    // Exceeds 100% alert — red/error
     if (percent > 101 && !_firedAlerts.has(monthKey + "-over")) {
       _firedAlerts.add(monthKey + "-over");
       const overAmount = totalSpent - budget;
-      const msg = `Budget Exceeded: You are ${currency.symbol} ${overAmount.toFixed(currency.decimals)} over your ${monthLabel} budget!`;
+      const msg = `Budget Exceeded: You are ${currency.symbol} ${overAmount.toFixed(currency.decimals)} over your ${monthLabel} budget! Total spent: ${currency.symbol} ${totalSpent.toFixed(currency.decimals)} out of ${currency.symbol} ${budget.toFixed(currency.decimals)}.`;
       toast.error(msg, { duration: 8000 });
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-        try {
-          new Notification("Budget Exceeded", { body: msg, icon: "/logo.svg" });
-        } catch { /* notification not supported */ }
+        try { new Notification("Budget Exceeded", { body: msg, icon: "/logo.svg" }); } catch { /* */ }
       }
+      _sendBudgetAlertEmail(monthKey, `Budget Exceeded - ${monthLabel}`, msg, "danger");
     }
   },
 }));
+
+// Send budget alert email via API route (fire-and-forget, non-blocking)
+async function _sendBudgetAlertEmail(monthKey: string, subject: string, message: string, level: string) {
+  try {
+    const email = useAuthStore.getState().userEmail;
+    if (!email || typeof window === "undefined") return;
+    await fetch("/api/budget-alert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: email, subject, message, level }),
+    });
+  } catch {
+    // Email send failed silently — in-app alert still worked
+  }
+}
