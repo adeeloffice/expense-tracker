@@ -205,7 +205,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
           userEmail: recoveryEmail,
           isAuthenticated: true,
           isInitializing: false,
-          isLocked: false,
+          isLocked: localStorage.getItem('et_locked') === 'true',
           needsEmailUpdate: !recoveryEmail,
         });
       } else {
@@ -360,6 +360,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   logout: async () => {
     if (!auth) return;
+    localStorage.removeItem('et_locked');
     try {
       await signOut(auth);
     } catch {
@@ -369,6 +370,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   lock: () => {
     set({ isLocked: true });
+    localStorage.setItem('et_locked', 'true');
   },
 
   unlock: async (password) => {
@@ -379,6 +381,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const credential = EmailAuthProvider.credential(email, password);
       await reauthenticateWithCredential(auth.currentUser, credential);
       set({ isLocked: false });
+      localStorage.removeItem('et_locked');
       return true;
     } catch {
       return false;
