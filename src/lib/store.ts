@@ -166,6 +166,31 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         const email = firebaseUser.email || "";
         const username = firebaseUser.displayName || email.split("@")[0];
 
+        // NEW USER CHECK: If authEmail is a real email and NOT verified, sign out immediately
+        // This prevents the dashboard from flashing after signup before email verification
+        if (!email.endsWith("@et.app") && !firebaseUser.emailVerified) {
+          // Check Firestore to confirm this is a new user (real email registered)
+          if (db) {
+            try {
+              const usernameDoc = await getDoc(doc(db, "usernames", username));
+              const storedAuthEmail = usernameDoc.exists() ? usernameDoc.data().authEmail : null;
+              if (storedAuthEmail && !storedAuthEmail.endsWith("@et.app")) {
+                // This is a new user with real email who hasn't verified yet — sign out
+                await signOut(auth);
+                set({
+                  currentUser: null,
+                  uid: null,
+                  userEmail: null,
+                  isAuthenticated: false,
+                  isInitializing: false,
+                  needsEmailUpdate: false,
+                });
+                return;
+              }
+            } catch { /* fall through */ }
+          }
+        }
+
         // Load recovery email from Firestore (separate from auth email)
         let recoveryEmail: string | null = null;
         let storedAuthEmail: string | null = null;
