@@ -20,7 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Settings, Coins, Target, Mail, CheckCircle2, ShieldOff, Info } from "lucide-react";
+import { Settings, Coins, Target, Mail, CheckCircle2, ShieldOff, Info, Bell, BellOff } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -41,14 +42,18 @@ function formatMonthLabel(key: string): string {
 export function SettingsDialog({ open, onOpenChange, selectedMonth }: SettingsDialogProps) {
   const currencyCode = useSettingsStore((s) => s.currencyCode);
   const monthlyBudgets = useSettingsStore((s) => s.monthlyBudgets);
+  const budgetNotifications = useSettingsStore((s) => s.budgetNotifications);
   const saveSettings = useSettingsStore((s) => s.saveSettings);
   const saveBudgetForMonth = useSettingsStore((s) => s.saveBudgetForMonth);
+  const saveBudgetNotifications = useSettingsStore((s) => s.saveBudgetNotifications);
   const userEmail = useAuthStore((s) => s.userEmail);
 
   const [budgetInput, setBudgetInput] = useState("");
   const [selectedCurrency, setSelectedCurrency] = useState(currencyCode);
   const [initialized, setInitialized] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [notifSaving, setNotifSaving] = useState(false);
+  const [browserPerm, setBrowserPerm] = useState<NotificationPermission | "unsupported">("default");
 
   const isAllMonths = selectedMonth === "all";
   const monthLabel = !isAllMonths && selectedMonth ? formatMonthLabel(selectedMonth) : "";
@@ -74,10 +79,15 @@ export function SettingsDialog({ open, onOpenChange, selectedMonth }: SettingsDi
     }
   }, [open, currentMonthBudget, currencyCode]);
 
-  // Track initialization
+  // Track initialization + check browser notification permission
   useEffect(() => {
     if (open) {
       setInitialized(true);
+      if (typeof window !== "undefined" && "Notification" in window) {
+        setBrowserPerm(Notification.permission);
+      } else {
+        setBrowserPerm("unsupported");
+      }
     } else {
       setInitialized(false);
     }
@@ -106,6 +116,19 @@ export function SettingsDialog({ open, onOpenChange, selectedMonth }: SettingsDi
 
   const handleClearBudget = () => {
     setBudgetInput("");
+  };
+
+  const handleToggleNotifications = async (checked: boolean) => {
+    setNotifSaving(true);
+    try {
+      await saveBudgetNotifications(checked);
+      // Refresh browser permission status after potential requestPermission call
+      if (typeof window !== "undefined" && "Notification" in window) {
+        setBrowserPerm(Notification.permission);
+      }
+    } finally {
+      setNotifSaving(false);
+    }
   };
 
   return (
@@ -180,6 +203,45 @@ export function SettingsDialog({ open, onOpenChange, selectedMonth }: SettingsDi
               All amounts will be displayed in {currency.name} ({currency.symbol}).
               {currency.decimals === 3 && " This currency uses 3 decimal places."}
             </p>
+          </div>
+
+          {/* Budget Notifications Section */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {budgetNotifications ? (
+                  <Bell className="w-4 h-4 text-emerald-500" />
+                ) : (
+                  <BellOff className="w-4 h-4 text-muted-foreground" />
+                )}
+                <Label className="font-semibold">Budget Alerts</Label>
+              </div>
+              <Switch
+                checked={budgetNotifications}
+                onCheckedChange={handleToggleNotifications}
+                disabled={notifSaving}
+                className="cursor-pointer"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {budgetNotifications
+                ? "You will be alerted at 85%, 100%, and when exceeding your monthly budget."
+                : "Enable to receive alerts when spending reaches 85%, 100%, or exceeds your budget."}
+            </p>
+            {budgetNotifications && browserPerm === "denied" && (
+              <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Browser notifications are blocked. You will see in-app alerts only. To enable browser notifications, reset the permission in your browser settings for this site.
+                </p>
+              </div>
+            )}
+            {budgetNotifications && browserPerm === "granted" && (
+              <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-2">
+                <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                  Browser notifications enabled. Alerts will appear even when the app is in the background.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Budget Section */}
