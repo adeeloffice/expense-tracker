@@ -183,7 +183,8 @@ export function LoginScreen() {
       const result = await resendVerification();
       if (result.success) {
         setResendSuccess(true);
-        startCooldown(60);
+        // Show green success message for 2 seconds, then start 60s cooldown
+        setTimeout(() => startCooldown(60), 2000);
       } else {
         const errMsg = result.error || "";
         if (errMsg === "session_expired") {
