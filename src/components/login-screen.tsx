@@ -203,12 +203,12 @@ export function LoginScreen() {
             <Wallet className="w-8 h-8 text-white" />
           </div>
           <CardTitle className="text-2xl font-bold tracking-tight">
-            {isSignUp ? "Create Account" : "Welcome Back"}
+            {isSignUp ? "Create Account" : "Expense Tracker"}
           </CardTitle>
           <CardDescription>
             {isSignUp
-              ? "Sign up to start tracking your expenses"
-              : "Sign in to your expense tracker"}
+              ? "Create your account to start tracking expenses"
+              : "Sign in to manage your expenses"}
           </CardDescription>
         </CardHeader>
         <CardContent>
