@@ -181,7 +181,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
                 recoveryEmail = stored;
               }
             }
-          } catch { /* ignore */ }
+          } catch { /* Firestore read failed, use fallback below */ }
+        }
+
+        // Fallback: if Firestore didn't have a recovery email, use the Firebase Auth email
+        // (when user signed up with a real email, it's stored in both places)
+        if (!recoveryEmail && email && !email.endsWith("@et.app")) {
+          recoveryEmail = email;
         }
 
         set({
@@ -515,22 +521,34 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     // Step 1: Re-authenticate then update Firebase Auth email FIRST
     try {
-      const currentAuthEmail = auth.currentUser!.email!;
+      // Capture the current user reference before re-auth (it may change after re-auth)
+      const userBefore = auth.currentUser!;
+      const currentAuthEmail = userBefore.email!;
       const credential = EmailAuthProvider.credential(currentAuthEmail, password);
-      await reauthenticateWithCredential(auth.currentUser!, credential);
-      if (auth.currentUser!.email !== trimmedEmail) {
-        await firebaseUpdateEmail(auth.currentUser!, trimmedEmail);
+      const result = await reauthenticateWithCredential(userBefore, credential);
+      // Use the refreshed user reference from re-auth result
+      const refreshedUser = result.user;
+      if (refreshedUser.email !== trimmedEmail) {
+        await firebaseUpdateEmail(refreshedUser, trimmedEmail);
       }
     } catch (authErr: unknown) {
       const code = (authErr as { code?: string })?.code || "";
+      const message = (authErr as { message?: string })?.message || "";
+      console.error("Firebase Auth email update failed:", code, message);
       if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
         return { success: false, error: "Incorrect password. Please try again." };
       }
+      if (code === "auth/email-already-in-use") {
+        return { success: false, error: "This email is already used by another Firebase account" };
+      }
+      if (code === "auth/too-many-requests") {
+        return { success: false, error: "Too many attempts. Please wait a moment and try again." };
+      }
+      if (code === "auth/invalid-email") {
+        return { success: false, error: "Invalid email format. Please check and try again." };
+      }
       // If Firebase Auth email update fails for any reason, don't update Firestore either
-      const msg = code === "auth/email-already-in-use"
-        ? "This email is already used by another Firebase account"
-        : "Failed to update email in Firebase. Please try again.";
-      return { success: false, error: msg };
+      return { success: false, error: `Failed to update email: ${message || "Unknown error"}. Please try again.` };
     }
 
     // Step 2: Only after Firebase Auth succeeds, update Firestore
