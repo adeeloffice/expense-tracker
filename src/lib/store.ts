@@ -330,31 +330,36 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return { success: true };
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || "";
-      // Username exists (we checked above), so it must be wrong password
+      if (code === "auth/user-not-found") {
+        // authEmail in Firestore might not match Firebase Auth yet (pending email verification)
+        // Fall back to @et.app email
+        const fallbackEmail = usernameToEmail(normalized);
+        try {
+          await signInWithEmailAndPassword(auth, fallbackEmail, password);
+          // Login succeeded with fallback — update authEmail in Firestore to match
+          updateDoc(doc(db, "usernames", normalized), { authEmail: fallbackEmail }).catch(() => {});
+          return { success: true };
+        } catch {
+          // Fallback also failed — clean up orphaned Firestore data
+          try {
+            const data = (await getDoc(doc(db, "usernames", normalized))).data();
+            const uid = data?.uid;
+            if (uid) {
+              const expensesSnapshot = await getDocs(collection(db, "users", uid, "expenses"));
+              if (!expensesSnapshot.empty) {
+                const batch = writeBatch(db);
+                expensesSnapshot.docs.forEach((d) => batch.delete(d.ref));
+                await batch.commit();
+              }
+              await deleteDoc(doc(db, "users", uid, "settings", "config")).catch(() => {});
+            }
+          } catch { /* best effort cleanup */ }
+          await deleteDoc(doc(db, "usernames", normalized)).catch(() => {});
+          return { success: false, error: "User not found. Please sign up first." };
+        }
+      }
       if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
         return { success: false, error: "Incorrect password" };
-      }
-      if (code === "auth/user-not-found") {
-        // Orphaned Firestore doc — Auth user was deleted (e.g. from Firebase Console)
-        // Clean up ALL remaining Firestore data for this user
-        try {
-          const data = (await getDoc(doc(db, "usernames", normalized))).data();
-          const uid = data?.uid;
-          if (uid) {
-            // Delete all expenses
-            const expensesSnapshot = await getDocs(collection(db, "users", uid, "expenses"));
-            if (!expensesSnapshot.empty) {
-              const batch = writeBatch(db);
-              expensesSnapshot.docs.forEach((d) => batch.delete(d.ref));
-              await batch.commit();
-            }
-            // Delete settings
-            await deleteDoc(doc(db, "users", uid, "settings", "config")).catch(() => {});
-          }
-        } catch { /* best effort cleanup */ }
-        // Finally delete the usernames doc
-        await deleteDoc(doc(db, "usernames", normalized)).catch(() => {});
-        return { success: false, error: "User not found. Please sign up first." };
       }
       return { success: false, error: "Login failed. Please try again." };
     }
@@ -566,6 +571,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       await updateDoc(doc(db, "usernames", currentUser), {
         recoveryEmail: trimmedEmail,
         email: trimmedEmail,
+        authEmail: trimmedEmail,
       });
     } catch {
       // Firestore update failed but verification email was sent — acceptable
