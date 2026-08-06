@@ -218,7 +218,7 @@ export function Dashboard() {
   const isCurrentMonth = selectedMonth === getMonthKey(new Date());
   const isAllMonths = selectedMonth === "all";
 
-  // Monthly bar chart data (all months)
+  // Monthly bar chart data — respects selected month filter
   const monthlyData = useMemo(() => {
     const map: Record<string, number> = {};
     expenses.forEach((e) => {
@@ -226,10 +226,17 @@ export function Dashboard() {
       const key = getMonthKey(d);
       map[key] = (map[key] || 0) + e.amount;
     });
-    return Object.entries(map)
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(-6);
-  }, [expenses]);
+    const sorted = Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
+    if (selectedMonth === "all") {
+      // All months: show last 6
+      return sorted.slice(-6);
+    }
+    // Specific month: find its index and show 5 months before + this month (6 total)
+    const idx = sorted.findIndex(([key]) => key === selectedMonth);
+    if (idx === -1) return sorted.slice(-6);
+    const start = Math.max(0, idx - 5);
+    return sorted.slice(start, idx + 1);
+  }, [expenses, selectedMonth]);
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50/50 dark:bg-gray-950">

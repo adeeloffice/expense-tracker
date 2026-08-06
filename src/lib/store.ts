@@ -171,6 +171,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
         // Load recovery email from Firestore (separate from auth email)
         let recoveryEmail: string | null = null;
+        let storedAuthEmail: string | null = null;
         if (db) {
           try {
             const usernameDoc = await getDoc(doc(db, "usernames", username));
@@ -180,6 +181,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
               const stored = data.recoveryEmail || data.email;
               if (stored && !stored.endsWith("@et.app")) {
                 recoveryEmail = stored;
+              }
+              storedAuthEmail = data.authEmail || null;
+
+              // Sync authEmail in Firestore if Firebase Auth email changed
+              // (happens after user clicks verifyBeforeUpdateEmail link)
+              if (email && email !== storedAuthEmail && !email.endsWith("@et.app")) {
+                updateDoc(doc(db, "usernames", username), { authEmail: email }).catch(() => {});
               }
             }
           } catch { /* Firestore read failed, use fallback below */ }
