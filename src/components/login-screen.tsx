@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuthStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,9 +46,26 @@ export function LoginScreen() {
   const [pendingVerify, setPendingVerify] = useState<{ email: string } | null>(null);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   // Email verification after signup
   const [verifyEmail, setVerifyEmail] = useState("");
+
+  // Cooldown timer for resend button
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      cooldownRef.current = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+    } else if (cooldownRef.current) {
+      clearTimeout(cooldownRef.current);
+    }
+    return () => { if (cooldownRef.current) clearTimeout(cooldownRef.current); };
+  }, [resendCooldown]);
+
+  const startCooldown = useCallback((seconds: number) => {
+    setResendCooldown(seconds);
+    setResendSuccess(false);
+  }, []);
 
   const login = useAuthStore((s) => s.login);
   const signup = useAuthStore((s) => s.signup);
@@ -113,6 +130,7 @@ export function LoginScreen() {
         if (result.error === 'verify_email' && result.pendingUser) {
           setPendingVerify({ email: result.pendingUser.email });
           setResendSuccess(false);
+          startCooldown(10);
         } else {
           setError(result.error || "Login failed");
         }
@@ -152,15 +170,20 @@ export function LoginScreen() {
   };
 
   const handleResendVerification = async () => {
-    if (!pendingVerify || !password) return;
+    if (!pendingVerify || !password || resendCooldown > 0) return;
     setResendLoading(true);
     setResendSuccess(false);
+    setError("");
     try {
       const result = await resendVerification(pendingVerify.email, password);
       if (result.success) {
         setResendSuccess(true);
+        startCooldown(60);
       } else {
         setError(result.error || "Failed to resend");
+        if ((result.error || "").includes("Too many")) {
+          startCooldown(30);
+        }
       }
     } finally {
       setResendLoading(false);
@@ -405,6 +428,10 @@ export function LoginScreen() {
                   {resendSuccess ? (
                     <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
                       Verification link resent! Check your inbox.
+                    </p>
+                  ) : resendCooldown > 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Resend available in {resendCooldown}s
                     </p>
                   ) : (
                     <button
