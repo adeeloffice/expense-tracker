@@ -360,6 +360,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         updateDoc(doc(db, "usernames", normalized), { authEmail: loginEmail }).catch(() => {});
       }
 
+      // Try signing in with authEmail. If it fails (e.g. user verified a
+      // pending email change but authEmail wasn't synced yet), fall back
+      // to recoveryEmail and sync authEmail so future logins work.
+      const recoveryEmail = data.recoveryEmail || data.email;
       let cred;
       try {
         // CRITICAL: Set verifyPending BEFORE signInWithEmailAndPassword.
@@ -369,12 +373,26 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         set({ verifyPending: true });
         cred = await signInWithEmailAndPassword(auth, loginEmail, password);
       } catch (err: unknown) {
-        set({ verifyPending: false });
-        const code = (err as { code?: string })?.code || "";
-        if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
-          return { success: false, error: "Incorrect password" };
+        // If authEmail fails but we have a different recoveryEmail, try it
+        // (handles the case where verifyBeforeUpdateEmail completed but
+        // authEmail in Firestore wasn't synced yet)
+        if (recoveryEmail && recoveryEmail !== loginEmail && !recoveryEmail.endsWith("@et.app")) {
+          try {
+            cred = await signInWithEmailAndPassword(auth, recoveryEmail, password);
+            // Sync authEmail to the verified email so future logins work
+            updateDoc(doc(db, "usernames", normalized), { authEmail: recoveryEmail }).catch(() => {});
+          } catch {
+            set({ verifyPending: false });
+            return { success: false, error: "Incorrect password" };
+          }
+        } else {
+          set({ verifyPending: false });
+          const code = (err as { code?: string })?.code || "";
+          if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+            return { success: false, error: "Incorrect password" };
+          }
+          return { success: false, error: "Login failed. Please try again." };
         }
-        return { success: false, error: "Login failed. Please try again." };
       }
 
       // Only check email verification for new users (real email, not @et.app)
@@ -630,7 +648,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return { success: false, error: `Failed to send verification: ${message || "Unknown error"}` };
     }
 
-    // Step 2: Save recovery email to Firestore immediately (so UI shows it)
+    // Step 2: Save ONLY recoveryEmail to Firestore (NOT authEmail).
+    // authEmail stays as the current verified email so login still works.
+    // It will be auto-synced by onAuthStateChanged after verification completes.
     try {
       await updateDoc(doc(db, "usernames", currentUser), {
         recoveryEmail: trimmedEmail,
@@ -640,8 +660,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       // Firestore update failed but verification email was sent — acceptable
     }
 
-    // Update local state
-    set({ userEmail: trimmedEmail, needsEmailUpdate: false });
+    // Do NOT update local userEmail — GUI keeps showing current email.
+    // After the user verifies and re-logs in, onAuthStateChanged will pick up
+    // the new email from Firebase Auth and update the UI automatically.
     return { success: true, verificationSent: true };
   },
 }));
