@@ -297,7 +297,7 @@ export function Dashboard() {
                 </DropdownMenuItem>
                 {userEmail && (
                 <DropdownMenuItem onClick={openEmailDialog} className="cursor-pointer">
-                  <Mail className="w-4 h-4 mr-2" /> Change Recovery Email
+                  <Mail className="w-4 h-4 mr-2" /> Change Email
                 </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
@@ -453,7 +453,7 @@ export function Dashboard() {
                 </p>
                 <p className="text-base font-bold text-emerald-700 dark:text-emerald-300 mt-1">{pendingEmail}</p>
                 <p className="text-xs text-emerald-600/70 dark:text-emerald-500/70 mt-2">
-                  Your recovery email is saved. Click the link in the email to complete the Firebase authentication update.
+                  Click the link in the email to complete the update.
                 </p>
               </div>
               <DialogFooter>
@@ -466,18 +466,16 @@ export function Dashboard() {
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <Mail className="w-5 h-5 text-emerald-500" /> {userEmail ? "Change Recovery Email" : "Add Recovery Email"}
+                  <Mail className="w-5 h-5 text-emerald-500" /> Change Email
                 </DialogTitle>
                 <DialogDescription>
-                  {userEmail
-                    ? "Change the email used for password recovery."
-                    : "Add your email to enable password reset if you forget your password."}
+                  Change your email address. A verification link will be sent to the email address.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 {userEmail && (
                   <div className="bg-muted/50 border rounded-md px-3 py-2">
-                    <p className="text-xs text-muted-foreground">Current recovery email</p>
+                    <p className="text-xs text-muted-foreground">Current email</p>
                     <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{userEmail}</p>
                   </div>
                 )}
