@@ -13,8 +13,6 @@ import {
   updateProfile,
   sendPasswordResetEmail,
   firebaseSendEmailVerification,
-  firebaseUpdateEmail,
-  firebaseVerifyBeforeUpdateEmail,
   firebaseDeleteUser,
   reauthenticateWithCredential,
   EmailAuthProvider,
@@ -147,7 +145,6 @@ interface AuthState {
   cancelVerifyPending: () => Promise<void>;
   deleteAccount: (password: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (username: string) => Promise<{ success: boolean; error?: string; email?: string }>;
-  updateUserEmail: (newEmail: string, password: string) => Promise<{ success: boolean; error?: string; verificationSent?: boolean }>;
 }
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -554,116 +551,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     } catch {
       return { success: false, error: "Failed to send reset email. Please try again." };
     }
-  },
-
-  updateUserEmail: async (newEmail, password) => {
-    if (!auth?.currentUser) {
-      return { success: false, error: "Not authenticated" };
-    }
-    const { currentUser } = get();
-    if (!currentUser || !db) {
-      return { success: false, error: "Not authenticated" };
-    }
-    const trimmedEmail = newEmail.trim().toLowerCase();
-    if (!trimmedEmail || !trimmedEmail.includes("@") || !trimmedEmail.includes(".")) {
-      return { success: false, error: "Please enter a valid email address" };
-    }
-    if (!password || password.length < 6) {
-      return { success: false, error: "Please enter your password to confirm" };
-    }
-
-    // Check if this email is already used by another account
-    try {
-      const q = query(
-        collection(db, "usernames"),
-        where("recoveryEmail", "==", trimmedEmail)
-      );
-      const snapshot = await getDocs(q);
-      for (const d of snapshot.docs) {
-        if (d.id !== currentUser) {
-          return { success: false, error: "This email is already used by another account" };
-        }
-      }
-      // Also check old field name for backward compat
-      const q2 = query(
-        collection(db, "usernames"),
-        where("email", "==", trimmedEmail)
-      );
-      const snapshot2 = await getDocs(q2);
-      for (const d of snapshot2.docs) {
-        if (d.id !== currentUser) {
-          // Only flag if this doc doesn't already have recoveryEmail set
-          if (!d.data().recoveryEmail) {
-            return { success: false, error: "This email is already used by another account" };
-          }
-        }
-      }
-    } catch (err) {
-      // If query fails, try fallback: fetch all docs and check manually
-      try {
-        const allDocs = await getDocs(collection(db, "usernames"));
-        for (const d of allDocs.docs) {
-          if (d.id === currentUser) continue;
-          const data = d.data();
-          const em = data.recoveryEmail || data.email;
-          if (em && em.toLowerCase() === trimmedEmail) {
-            return { success: false, error: "This email is already used by another account" };
-          }
-        }
-      } catch {
-        // If even the fallback fails, allow the save (security rules may block reads)
-      }
-    }
-
-    // Step 1: Re-authenticate, then send verification email to the new address
-    try {
-      // Capture the current user reference before re-auth (it may change after re-auth)
-      const userBefore = auth.currentUser!;
-      const currentAuthEmail = userBefore.email!;
-      const credential = EmailAuthProvider.credential(currentAuthEmail, password);
-      const result = await reauthenticateWithCredential(userBefore, credential);
-      // Use the refreshed user reference from re-auth result
-      const refreshedUser = result.user;
-      if (refreshedUser.email !== trimmedEmail) {
-        // Firebase project requires email verification before changing — use verifyBeforeUpdateEmail
-        // This sends a verification link to the new email; the email changes only after the user clicks it
-        await firebaseVerifyBeforeUpdateEmail(refreshedUser, trimmedEmail);
-      }
-    } catch (authErr: unknown) {
-      const code = (authErr as { code?: string })?.code || "";
-      const message = (authErr as { message?: string })?.message || "";
-      console.error("Firebase Auth email verification failed:", code, message);
-      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
-        return { success: false, error: "Incorrect password. Please try again." };
-      }
-      if (code === "auth/email-already-in-use") {
-        return { success: false, error: "This email is already used by another Firebase account" };
-      }
-      if (code === "auth/too-many-requests") {
-        return { success: false, error: "Too many attempts. Please wait a moment and try again." };
-      }
-      if (code === "auth/invalid-email") {
-        return { success: false, error: "Invalid email format. Please check and try again." };
-      }
-      return { success: false, error: `Failed to send verification: ${message || "Unknown error"}` };
-    }
-
-    // Step 2: Save ONLY recoveryEmail to Firestore (NOT authEmail).
-    // authEmail stays as the current verified email so login still works.
-    // It will be auto-synced by onAuthStateChanged after verification completes.
-    try {
-      await updateDoc(doc(db, "usernames", currentUser), {
-        recoveryEmail: trimmedEmail,
-        email: trimmedEmail,
-      });
-    } catch {
-      // Firestore update failed but verification email was sent — acceptable
-    }
-
-    // Do NOT update local userEmail — GUI keeps showing current email.
-    // After the user verifies and re-logs in, onAuthStateChanged will pick up
-    // the new email from Firebase Auth and update the UI automatically.
-    return { success: true, verificationSent: true };
   },
 }));
 

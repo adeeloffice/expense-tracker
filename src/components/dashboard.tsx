@@ -1,20 +1,10 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
-import { useAuthStore, useExpenseStore, useSettingsStore, formatCurrency, getCurrency, type Expense } from "@/lib/store";
+import { useAuthStore, useExpenseStore, useSettingsStore, getCurrency, type Expense } from "@/lib/store";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -78,6 +68,7 @@ function isValidMonthKey(key: string): boolean {
 export function Dashboard() {
   const { theme, setTheme } = useTheme();
   const currentUser = useAuthStore((s) => s.currentUser);
+  const userEmail = useAuthStore((s) => s.userEmail);
   const logout = useAuthStore((s) => s.logout);
   const expenses = useExpenseStore((s) => s.expenses);
   const deleteExpense = useExpenseStore((s) => s.deleteExpense);
@@ -92,54 +83,7 @@ export function Dashboard() {
   // Month selector state
   const [selectedMonth, setSelectedMonth] = useState<string>(getMonthKey(new Date()));
 
-  // Add/Update recovery email
-  const userEmail = useAuthStore((s) => s.userEmail);
-  const updateUserEmail = useAuthStore((s) => s.updateUserEmail);
-  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
-  const [migrationEmail, setMigrationEmail] = useState("");
-  const [migrationPassword, setMigrationPassword] = useState("");
-  const [migrationError, setMigrationError] = useState("");
-  const [migrationLoading, setMigrationLoading] = useState(false);
-  const [verificationSent, setVerificationSent] = useState(false);
-  const [pendingEmail, setPendingEmail] = useState("");
 
-  const openEmailDialog = () => {
-    setMigrationEmail(userEmail || "");
-    setMigrationPassword("");
-    setMigrationError("");
-    setVerificationSent(false);
-    setPendingEmail("");
-    setEmailDialogOpen(true);
-  };
-
-  const handleSaveEmail = async () => {
-    setMigrationError("");
-    setVerificationSent(false);
-    setMigrationLoading(true);
-    try {
-      if (!migrationEmail.trim().includes("@") || !migrationEmail.trim().includes(".")) {
-        setMigrationError("Please enter a valid email address");
-        return;
-      }
-      if (!migrationPassword) {
-        setMigrationError("Please enter your password to confirm");
-        return;
-      }
-      const result = await updateUserEmail(migrationEmail.trim(), migrationPassword);
-      if (!result.success) {
-        setMigrationError(result.error || "Failed to save email");
-        return;
-      }
-      if (result.verificationSent) {
-        setVerificationSent(true);
-        setPendingEmail(migrationEmail.trim());
-      } else {
-        setEmailDialogOpen(false);
-      }
-    } finally {
-      setMigrationLoading(false);
-    }
-  };
 
   const handleEdit = useCallback((expense: Expense) => {
     setEditingExpense(expense);
@@ -295,11 +239,6 @@ export function Dashboard() {
                 <DropdownMenuItem onClick={exportCSV} className="cursor-pointer">
                   <Download className="w-4 h-4 mr-2" /> Export CSV
                 </DropdownMenuItem>
-                {userEmail && (
-                <DropdownMenuItem onClick={openEmailDialog} className="cursor-pointer">
-                  <Mail className="w-4 h-4 mr-2" /> Change Email
-                </DropdownMenuItem>
-                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => setDeleteAccountOpen(true)}
@@ -432,107 +371,7 @@ export function Dashboard() {
         editingExpense={editingExpense}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} selectedMonth={selectedMonth} />
-      <DeleteAccountDialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen} />
-
-      {/* Add/Update Recovery Email Dialog */}
-      <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          {verificationSent ? (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Mail className="w-5 h-5 text-emerald-500" /> Verification Email Sent
-                </DialogTitle>
-                <DialogDescription>
-                  Check your inbox and click the verification link to confirm.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-4 py-4">
-                <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
-                  A verification link has been sent to:
-                </p>
-                <p className="text-base font-bold text-emerald-700 dark:text-emerald-300 mt-1">{pendingEmail}</p>
-                <p className="text-xs text-emerald-600/70 dark:text-emerald-500/70 mt-2">
-                  Click the link in the email to complete the update.
-                </p>
-              </div>
-              <DialogFooter>
-                <Button onClick={() => setEmailDialogOpen(false)} className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer">
-                  Done
-                </Button>
-              </DialogFooter>
-            </>
-          ) : (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Mail className="w-5 h-5 text-emerald-500" /> Change Email
-                </DialogTitle>
-                <DialogDescription>
-                  Change your email address. A verification link will be sent to the email address.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                {userEmail && (
-                  <div className="bg-muted/50 border rounded-md px-3 py-2">
-                    <p className="text-xs text-muted-foreground">Current email</p>
-                    <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{userEmail}</p>
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <Label htmlFor="migration-email">Email Address</Label>
-                  <Input
-                    id="migration-email"
-                    type="email"
-                    placeholder="your@email.com"
-                    value={migrationEmail}
-                    onChange={(e) => { setMigrationEmail(e.target.value); setMigrationError(""); }}
-                    className="h-11"
-                    autoFocus
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="migration-password">Password</Label>
-                  <Input
-                    id="migration-password"
-                    type="password"
-                    placeholder="Enter your password"
-                    value={migrationPassword}
-                    onChange={(e) => { setMigrationPassword(e.target.value); setMigrationError(""); }}
-                    className="h-11"
-                  />
-                  <p className="text-xs text-muted-foreground">Required to verify your identity</p>
-                </div>
-                {migrationError && (
-                  <p className="text-sm text-destructive font-medium bg-destructive/10 px-3 py-2 rounded-md">{migrationError}</p>
-                )}
-              </div>
-              <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setEmailDialogOpen(false)} className="cursor-pointer">
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleSaveEmail}
-                  disabled={migrationLoading}
-                  className="bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
-                >
-                  {migrationLoading ? (
-                    <span className="flex items-center gap-2">
-                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Saving...
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <Mail className="w-4 h-4" /> Save Email
-                    </span>
-                  )}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
+      <DeleteAccountDialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen} />    </div>
   );
 }
 
