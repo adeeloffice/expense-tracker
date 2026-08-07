@@ -635,7 +635,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       await updateDoc(doc(db, "usernames", currentUser), {
         recoveryEmail: trimmedEmail,
         email: trimmedEmail,
-        authEmail: trimmedEmail,
       });
     } catch {
       // Firestore update failed but verification email was sent — acceptable
